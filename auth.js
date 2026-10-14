@@ -79,7 +79,7 @@
   dialog.addEventListener('click', e => { if (e.target === dialog) dialog.close(); });
   $('auth-switch').addEventListener('click', () => setMode(mode === 'signin' ? 'signup' : 'signin'));
 
-  document.querySelectorAll('[data-provider]').forEach(btn =>
+  dialog.querySelectorAll('[data-provider]').forEach(btn =>
     btn.addEventListener('click', async () => {
       if (!configured) return setMessage(NOT_CONFIGURED, 'info');
       const { error } = await client.auth.signInWithOAuth({

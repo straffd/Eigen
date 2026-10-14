@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=19">
+  <link rel="stylesheet" href="styles.css?v=20">
 </head>
 <body>
   <!-- Icon sprite -->
@@ -244,8 +244,8 @@
       <h3 class="settings-heading"><svg><use href="#i-sparkle"/></svg>AI provider</h3>
       <p class="settings-text">Use your own API key for the course AI. Keys are saved only in this browser and sent straight to the provider, never to Eigen’s servers. Questions are billed to your own account.</p>
       <div class="provider-switch" role="radiogroup" aria-label="AI provider">
-        <button type="button" role="radio" data-provider="claude">Claude</button>
-        <button type="button" role="radio" data-provider="gemini">Gemini</button>
+        <button type="button" role="radio" data-ai-provider="claude">Claude</button>
+        <button type="button" role="radio" data-ai-provider="gemini">Gemini</button>
       </div>
 
       <div class="provider-panel" data-panel="claude">
@@ -303,14 +303,14 @@
   <div class="toast" id="toast" role="status" hidden></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script>
-  <script src="config.js?v=19"></script>
-  <script src="auth.js?v=19"></script>
-  <script src="classes.js?v=19"></script>
-  <script src="extract.js?v=19"></script>
-  <script src="files.js?v=19"></script>
-  <script src="ai-direct.js?v=19"></script>
-  <script src="settings.js?v=19"></script>
-  <script src="chat.js?v=19"></script>
+  <script src="config.js?v=20"></script>
+  <script src="auth.js?v=20"></script>
+  <script src="classes.js?v=20"></script>
+  <script src="extract.js?v=20"></script>
+  <script src="files.js?v=20"></script>
+  <script src="ai-direct.js?v=20"></script>
+  <script src="settings.js?v=20"></script>
+  <script src="chat.js?v=20"></script>
   <script>
     const app = document.getElementById('app');
     const toggle = () => app.classList.toggle('collapsed');

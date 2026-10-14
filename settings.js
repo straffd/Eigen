@@ -11,15 +11,15 @@
   const switchBtns = [...dialog.querySelectorAll('.provider-switch button')];
   function showProvider(p) {
     switchBtns.forEach(b => {
-      const on = b.dataset.provider === p;
+      const on = b.dataset.aiProvider === p;
       b.classList.toggle('active', on);
       b.setAttribute('aria-checked', on);
     });
     dialog.querySelectorAll('.provider-panel').forEach(el => { el.hidden = el.dataset.panel !== p; });
   }
   switchBtns.forEach(b => b.addEventListener('click', () => {
-    ai.setProvider(b.dataset.provider);
-    showProvider(b.dataset.provider);
+    ai.setProvider(b.dataset.aiProvider);
+    showProvider(b.dataset.aiProvider);
     changed();
   }));
 

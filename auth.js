@@ -1,4 +1,4 @@
-// Authentication: Google, Microsoft (Supabase "azure" provider) and email/password.
+// Authentication: Google and email/password.
 (() => {
   const { SUPABASE_URL, SUPABASE_ANON_KEY } = window.EIGEN_CONFIG || {};
   const configured = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY && window.supabase);
@@ -80,10 +80,7 @@
       if (!configured) return setMessage(NOT_CONFIGURED, 'info');
       const { error } = await client.auth.signInWithOAuth({
         provider: btn.dataset.provider,
-        options: {
-          redirectTo: location.origin + location.pathname,
-          scopes: btn.dataset.provider === 'azure' ? 'email' : undefined,
-        },
+        options: { redirectTo: location.origin + location.pathname },
       });
       if (error) setMessage(error.message);
     }));

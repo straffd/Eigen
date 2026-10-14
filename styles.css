@@ -465,3 +465,8 @@ svg.lg { width: 24px; height: 24px; stroke-width: 1.4; }
 .sidebar .avatar { width: 38px; height: 38px; font-size: 16px; }
 .sidebar .account-name { font-size: 16px; }
 .sidebar .account-sub { font-size: 13px; }
+
+/* Create-account mode is email only */
+.auth[data-mode="signup"] .auth-providers,
+.auth[data-mode="signup"] .auth-divider { display: none; }
+.auth[data-mode="signup"] .auth-form { margin-top: 24px; }

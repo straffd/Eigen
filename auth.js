@@ -26,6 +26,7 @@
   function setMode(next) {
     mode = next;
     const signup = mode === 'signup';
+    dialog.dataset.mode = mode;
     $('auth-title-text').textContent = signup ? 'Join' : 'Sign in to';
     submit.textContent = signup ? 'Create account' : 'Sign in';
     $('auth-switch-text').textContent = signup ? 'Already have an account?' : 'New to Eigen?';

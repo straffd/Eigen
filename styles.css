@@ -129,8 +129,16 @@ svg.lg { width: 24px; height: 24px; stroke-width: 1.4; }
 }
 .row:hover { background: var(--hover); }
 .row svg { color: var(--text-muted); }
-.row.muted { color: var(--text-muted); }
-.row.muted:hover { color: var(--text); }
+.row[aria-disabled="true"] { color: var(--text-muted); cursor: default; }
+
+.badge {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
 
 /* Classes */
 .classes { border-top: 1px solid var(--border); padding-top: 12px; }

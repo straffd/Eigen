@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=12">
+  <link rel="stylesheet" href="styles.css?v=13">
 </head>
 <body>
   <!-- Icon sprite -->
@@ -24,6 +24,7 @@
     <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></symbol>
     <symbol id="i-folder-plus" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 10v6M9 13h6"/></symbol>
+    <symbol id="i-restore" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></symbol>
     <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
     <symbol id="i-square-plus" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M12 8v8M8 12h8"/></symbol>
     <symbol id="i-circle-plus" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></symbol>
@@ -53,7 +54,7 @@
       </label>
 
       <nav class="nav">
-        <a class="row" href="#"><svg><use href="#i-archive"/></svg>Archive</a>
+        <a class="row" href="#archive" data-nav="archive"><svg><use href="#i-archive"/></svg>Archive</a>
         <a class="row" href="#"><svg><use href="#i-calendar"/></svg>Calendar</a>
         <a class="row" href="#"><svg><use href="#i-clock"/></svg>Timetable</a>
         <a class="row" href="#"><svg><use href="#i-users"/></svg>Friends</a>
@@ -69,7 +70,7 @@
         </div>
         <ul class="class-list" id="class-list"></ul>
         <p class="classes-empty" id="classes-empty">No classes yet. Press + to add one.</p>
-        <p class="classes-limit" id="classes-limit" hidden>Free plan includes up to 4 classes.</p>
+        <p class="classes-limit" id="classes-limit" hidden>Free plan includes up to 4 active classes.</p>
       </section>
 
       <footer class="account" id="account">
@@ -104,7 +105,7 @@
         <svg class="lg"><use href="#i-panel"/></svg>
       </button>
 
-      <div class="home">
+      <div class="home" data-view="home">
         <h1 class="greeting" id="greeting">Good evening</h1>
         <p class="subtitle">Everything for today, in one place.</p>
 
@@ -131,6 +132,14 @@
           </a>
         </div>
       </div>
+
+      <section class="archive-view" data-view="archive" hidden aria-labelledby="archive-title">
+        <header class="view-header">
+          <h1 class="view-title" id="archive-title">Archive</h1>
+          <p class="view-subtitle">Classes and folders you’ve put away. Archived classes don’t count toward your 4-class limit.</p>
+        </header>
+        <div id="archive-content"></div>
+      </section>
     </main>
   </div>
 
@@ -184,15 +193,25 @@
   <div class="toast" id="toast" role="status" hidden></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script>
-  <script src="config.js?v=12"></script>
-  <script src="auth.js?v=12"></script>
-  <script src="classes.js?v=12"></script>
+  <script src="config.js?v=13"></script>
+  <script src="auth.js?v=13"></script>
+  <script src="classes.js?v=13"></script>
   <script>
     const app = document.getElementById('app');
     const toggle = () => app.classList.toggle('collapsed');
     document.getElementById('collapse').addEventListener('click', toggle);
     document.getElementById('reopen').addEventListener('click', toggle);
 
+
+    // Views: #archive shows the archive, anything else shows home.
+    function showView() {
+      const view = location.hash === '#archive' ? 'archive' : 'home';
+      document.querySelectorAll('[data-view]').forEach(el => { el.hidden = el.dataset.view !== view; });
+      document.querySelectorAll('[data-nav]').forEach(el => el.classList.toggle('active', el.dataset.nav === view));
+      document.querySelector('.main').scrollTop = 0;
+    }
+    window.addEventListener('hashchange', showView);
+    showView();
 
     const h = new Date().getHours();
     document.getElementById('greeting').textContent =

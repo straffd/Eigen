@@ -1,6 +1,7 @@
 // Classes and their folders in the sidebar.
 // Signed in: stored in Supabase (tables from supabase/schema.sql).
 // Signed out: stored in this browser's localStorage, and moved into the account on first sign-in.
+// Archived classes and folders are hidden from the sidebar and listed on the Archive page.
 (() => {
   const MAX_CLASSES = 4; // Free plan limit (also enforced by the database)
   const MAX_NAME = 40;
@@ -14,8 +15,9 @@
   const menu = $('context-menu');
   const confirmDialog = $('confirm-dialog');
   const toastEl = $('toast');
+  const archiveEl = $('archive-content');
 
-  let classes = [];   // [{ id, name, createdAt, folders: [{ id, name, createdAt }] }]
+  let classes = [];   // [{ id, name, createdAt, archivedAt, folders: [{ id, name, createdAt, archivedAt }] }]
   let store = null;
   let status = 'loading'; // 'loading' | 'ready' | 'error'
   const expanded = new Set();
@@ -23,12 +25,16 @@
   const uid = () => crypto.randomUUID();
   const findClass = id => classes.find(c => c.id === id);
   const byCreated = (a, b) => a.createdAt - b.createdAt;
+  const isActive = x => !x.archivedAt;
+  const activeClasses = () => classes.filter(isActive);
+  const atLimit = () => activeClasses().length >= MAX_CLASSES;
+  const LIMIT_MSG = `Free plan includes up to ${MAX_CLASSES} active classes. Archive one to make room.`;
 
   // ---------- Storage: browser (guest) ----------
   const localStore = {
     kind: 'local',
     async list() {
-      try { return JSON.parse(localStorage.getItem(GUEST_KEY)) || []; } catch { return []; }
+      try { return normalize(JSON.parse(localStorage.getItem(GUEST_KEY)) || []); } catch { return []; }
     },
     persist() {
       try { localStorage.setItem(GUEST_KEY, JSON.stringify(classes)); } catch {}
@@ -39,38 +45,51 @@
     async addFolder() { this.persist(); },
     async renameFolder() { this.persist(); },
     async deleteFolder() { this.persist(); },
+    async setClassArchived() { this.persist(); },
+    async setFolderArchived() { this.persist(); },
   };
 
+  // Older saved data has no archivedAt.
+  function normalize(list) {
+    return list.map(c => ({ archivedAt: null, ...c, folders: (c.folders || []).map(f => ({ archivedAt: null, ...f })) }));
+  }
+
   // ---------- Storage: Supabase (signed in) ----------
+  const iso = t => (t ? new Date(t).toISOString() : null);
+
   function supabaseStore(db) {
     const check = ({ error }) => { if (error) throw error; };
     return {
       kind: 'supabase',
       async list() {
         const { data, error } = await db.from('classes')
-          .select('id, name, created_at, folders(id, name, created_at)');
+          .select('id, name, created_at, archived_at, folders(id, name, created_at, archived_at)');
         if (error) throw error;
         return data.map(c => ({
           id: c.id,
           name: c.name,
           createdAt: Date.parse(c.created_at),
+          archivedAt: c.archived_at ? Date.parse(c.archived_at) : null,
           folders: (c.folders || [])
-            .map(f => ({ id: f.id, name: f.name, createdAt: Date.parse(f.created_at) }))
+            .map(f => ({ id: f.id, name: f.name, createdAt: Date.parse(f.created_at),
+                         archivedAt: f.archived_at ? Date.parse(f.archived_at) : null }))
             .sort(byCreated),
         })).sort(byCreated);
       },
-      async addClass(c) { check(await db.from('classes').insert({ id: c.id, name: c.name })); },
+      async addClass(c) { check(await db.from('classes').insert({ id: c.id, name: c.name, archived_at: iso(c.archivedAt) })); },
       async renameClass(c) { check(await db.from('classes').update({ name: c.name }).eq('id', c.id)); },
       async deleteClass(c) { check(await db.from('classes').delete().eq('id', c.id)); },
-      async addFolder(c, f) { check(await db.from('folders').insert({ id: f.id, class_id: c.id, name: f.name })); },
+      async addFolder(c, f) { check(await db.from('folders').insert({ id: f.id, class_id: c.id, name: f.name, archived_at: iso(f.archivedAt) })); },
       async renameFolder(c, f) { check(await db.from('folders').update({ name: f.name }).eq('id', f.id)); },
       async deleteFolder(c, f) { check(await db.from('folders').delete().eq('id', f.id)); },
+      async setClassArchived(c) { check(await db.from('classes').update({ archived_at: iso(c.archivedAt) }).eq('id', c.id)); },
+      async setFolderArchived(c, f) { check(await db.from('folders').update({ archived_at: iso(f.archivedAt) }).eq('id', f.id)); },
     };
   }
 
   function describeError(err) {
     const msg = err?.message || '';
-    if (/class_limit/.test(msg)) return `Free plan includes up to ${MAX_CLASSES} classes.`;
+    if (/class_limit/.test(msg)) return LIMIT_MSG;
     if (/failed to fetch|network/i.test(msg)) return 'Couldn’t reach Eigen’s servers. Check your connection.';
     if (err?.code === '42P01' || err?.code === 'PGRST205' || /does not exist|schema cache/i.test(msg))
       return 'Classes aren’t set up in the database yet.';
@@ -113,11 +132,13 @@
     const legacyKey = 'eigen.classes.' + userId;
     let guest = await localStore.list();
     if (!guest.length) {
-      try { guest = JSON.parse(localStorage.getItem(legacyKey)) || []; } catch { guest = []; }
+      try { guest = normalize(JSON.parse(localStorage.getItem(legacyKey)) || []); } catch { guest = []; }
     }
     if (!guest.length || classes.length) return;
     try {
-      for (const c of guest.slice(0, MAX_CLASSES)) {
+      let active = 0;
+      for (const c of guest) {
+        if (isActive(c) && ++active > MAX_CLASSES) continue;
         await store.addClass(c);
         for (const f of c.folders) await store.addFolder(c, f);
       }
@@ -154,11 +175,17 @@
   }
 
   let toastTimer;
-  function toast(text) {
-    toastEl.textContent = text;
+  function toast(text, action) {
+    toastEl.replaceChildren(document.createTextNode(text));
+    if (action) {
+      const b = el(`<button class="toast-action" type="button"></button>`);
+      b.textContent = action.label;
+      b.addEventListener('click', () => { toastEl.hidden = true; action.run(); });
+      toastEl.append(b);
+    }
     toastEl.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { toastEl.hidden = true; }, 2800);
+    toastTimer = setTimeout(() => { toastEl.hidden = true; }, action ? 5000 : 2800);
   }
 
   function confirmDelete(title, text) {
@@ -204,15 +231,17 @@
 
   // ---------- Render ----------
   function render() {
-    list.replaceChildren(...classes.map(renderClass));
-    empty.hidden = classes.length > 0 && status === 'ready';
+    const active = activeClasses();
+    list.replaceChildren(...active.map(renderClass));
+    empty.hidden = active.length > 0 && status === 'ready';
     empty.textContent = status === 'loading' ? 'Loading classes…'
       : status === 'error' ? 'Couldn’t load your classes.'
       : 'No classes yet. Press + to add one.';
-    const full = classes.length >= MAX_CLASSES || status !== 'ready';
+    const full = atLimit() || status !== 'ready';
     addBtn.classList.toggle('is-disabled', full);
-    limitNote.hidden = !(classes.length >= MAX_CLASSES);
+    limitNote.hidden = !atLimit();
     addBtn.setAttribute('aria-label', full ? 'Can’t add a class right now' : 'Add class');
+    renderArchive();
   }
 
   function renderClass(c) {
@@ -232,10 +261,11 @@
       </li>`);
     li.querySelector('.class-name').textContent = c.name;
     const folders = li.querySelector('.folder-list');
-    if (c.folders.length) {
-      folders.append(...c.folders.map(f => renderFolder(c, f)));
+    const shown = c.folders.filter(isActive);
+    if (shown.length) {
+      folders.append(...shown.map(f => renderFolder(c, f)));
     } else {
-      folders.append(el(`<li class="folder-empty">No folders yet</li>`));
+      folders.append(el(`<li class="folder-empty">${c.folders.length ? 'All folders archived' : 'No folders yet'}</li>`));
     }
     return li;
   }
@@ -252,16 +282,13 @@
   // ---------- Actions ----------
   async function addClass() {
     if (status !== 'ready') return;
-    if (classes.length >= MAX_CLASSES) {
-      toast(`Free plan includes up to ${MAX_CLASSES} classes.`);
-      return;
-    }
+    if (atLimit()) return toast(LIMIT_MSG);
     const slot = el(`<li class="class"><div class="class-item editing"></div></li>`);
     list.append(slot);
     empty.hidden = true;
     const name = await inlineInput(slot.firstElementChild, { placeholder: 'Class name, e.g. COMP1511' });
-    if (!name || classes.length >= MAX_CLASSES) return render();
-    const c = { id: uid(), name, folders: [], createdAt: Date.now() };
+    if (!name || atLimit()) return render();
+    const c = { id: uid(), name, folders: [], createdAt: Date.now(), archivedAt: null };
     classes.push(c);
     await commit('addClass', c);
   }
@@ -277,7 +304,7 @@
     folders.append(slot);
     const name = await inlineInput(slot.querySelector('.slot'), { placeholder: 'Folder name' });
     if (!name || !findClass(classId)) return render();
-    const f = { id: uid(), name, createdAt: Date.now() };
+    const f = { id: uid(), name, createdAt: Date.now(), archivedAt: null };
     c.folders.push(f);
     await commit('addFolder', c, f);
   }
@@ -326,6 +353,118 @@
     c.folders = c.folders.filter(x => x.id !== folderId);
     await commit('deleteFolder', c, f);
   }
+
+  async function archiveClass(classId) {
+    const c = findClass(classId);
+    if (!c || c.archivedAt) return;
+    c.archivedAt = Date.now();
+    expanded.delete(classId);
+    toast(`Archived ${c.name}.`, { label: 'Undo', run: () => restoreClass(classId) });
+    await commit('setClassArchived', c);
+  }
+
+  async function restoreClass(classId) {
+    const c = findClass(classId);
+    if (!c || !c.archivedAt) return;
+    if (atLimit()) return toast(LIMIT_MSG);
+    c.archivedAt = null;
+    await commit('setClassArchived', c);
+  }
+
+  async function archiveFolder(classId, folderId) {
+    const c = findClass(classId);
+    const f = c?.folders.find(x => x.id === folderId);
+    if (!f || f.archivedAt) return;
+    f.archivedAt = Date.now();
+    toast(`Archived ${f.name}.`, { label: 'Undo', run: () => restoreFolder(classId, folderId) });
+    await commit('setFolderArchived', c, f);
+  }
+
+  async function restoreFolder(classId, folderId) {
+    const c = findClass(classId);
+    const f = c?.folders.find(x => x.id === folderId);
+    if (!f || !f.archivedAt) return;
+    f.archivedAt = null;
+    await commit('setFolderArchived', c, f);
+  }
+
+  // ---------- Archive page ----------
+  function timeAgo(t) {
+    const days = Math.floor((Date.now() - t) / 86400000);
+    if (days < 1) return 'today';
+    if (days === 1) return 'yesterday';
+    if (days < 30) return `${days} days ago`;
+    return new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+
+  function archiveItem({ kind, iconName, name, meta, classId, folderId }) {
+    const li = el(`
+      <li class="archive-item" data-kind="${kind}" data-class-id="${classId}" ${folderId ? `data-folder-id="${folderId}"` : ''}>
+        <span class="archive-icon">${icon(iconName)}</span>
+        <div class="archive-text"><span class="archive-name"></span><span class="archive-meta"></span></div>
+        <div class="archive-actions">
+          <button class="btn-secondary btn-sm" type="button" data-action="restore">${icon('restore')}Restore</button>
+          <button class="icon-btn danger" type="button" data-action="delete" aria-label="Delete permanently">${icon('trash')}</button>
+        </div>
+      </li>`);
+    li.querySelector('.archive-name').textContent = name;
+    li.querySelector('.archive-meta').textContent = meta;
+    return li;
+  }
+
+  function renderArchive() {
+    if (status !== 'ready') {
+      archiveEl.replaceChildren(el(`<p class="archive-status">${status === 'loading' ? 'Loading…' : 'Couldn’t load your archive.'}</p>`));
+      return;
+    }
+    const archivedClasses = classes.filter(c => c.archivedAt).sort((a, b) => b.archivedAt - a.archivedAt);
+    const archivedFolders = classes.filter(isActive)
+      .flatMap(c => c.folders.filter(f => f.archivedAt).map(f => ({ c, f })))
+      .sort((a, b) => b.f.archivedAt - a.f.archivedAt);
+
+    if (!archivedClasses.length && !archivedFolders.length) {
+      archiveEl.replaceChildren(el(`
+        <div class="archive-empty">
+          ${icon('archive')}
+          <p class="archive-empty-title">Nothing archived yet</p>
+          <p class="archive-empty-text">Right-click a class or folder in the sidebar and choose Archive to put it away here.</p>
+        </div>`));
+      return;
+    }
+
+    const section = (title, items) => {
+      const sec = el(`<section class="archive-section"><h2 class="archive-heading"></h2><ul class="archive-list"></ul></section>`);
+      sec.querySelector('h2').textContent = `${title} · ${items.length}`;
+      sec.querySelector('ul').append(...items);
+      return sec;
+    };
+    const parts = [];
+    if (archivedClasses.length) {
+      parts.push(section('Classes', archivedClasses.map(c => {
+        const n = c.folders.length;
+        return archiveItem({
+          kind: 'class', iconName: 'archive', name: c.name, classId: c.id,
+          meta: `${n} folder${n === 1 ? '' : 's'} · Archived ${timeAgo(c.archivedAt)}`,
+        });
+      })));
+    }
+    if (archivedFolders.length) {
+      parts.push(section('Folders', archivedFolders.map(({ c, f }) => archiveItem({
+        kind: 'folder', iconName: 'folder', name: f.name, classId: c.id, folderId: f.id,
+        meta: `${c.name} · Archived ${timeAgo(f.archivedAt)}`,
+      }))));
+    }
+    archiveEl.replaceChildren(...parts);
+  }
+
+  archiveEl.addEventListener('click', e => {
+    const item = e.target.closest('.archive-item');
+    const action = e.target.closest('[data-action]')?.dataset.action;
+    if (!item || !action) return;
+    const { kind, classId, folderId } = item.dataset;
+    if (kind === 'class') action === 'restore' ? restoreClass(classId) : deleteClass(classId);
+    else action === 'restore' ? restoreFolder(classId, folderId) : deleteFolder(classId, folderId);
+  });
 
   function toggle(classId) {
     expanded.has(classId) ? expanded.delete(classId) : expanded.add(classId);
@@ -376,6 +515,7 @@
       const folderId = folderEl.dataset.folderId;
       openMenu(x, y, [
         { label: 'Rename', icon: 'pencil', run: () => renameFolder(classId, folderId) },
+        { label: 'Archive folder', icon: 'archive', run: () => archiveFolder(classId, folderId) },
         '-',
         { label: 'Delete folder', icon: 'trash', danger: true, run: () => deleteFolder(classId, folderId) },
       ]);
@@ -383,6 +523,7 @@
       openMenu(x, y, [
         { label: 'New folder', icon: 'folder-plus', run: () => addFolder(classId) },
         { label: 'Rename', icon: 'pencil', run: () => renameClass(classId) },
+        { label: 'Archive class', icon: 'archive', run: () => archiveClass(classId) },
         '-',
         { label: 'Delete class', icon: 'trash', danger: true, run: () => deleteClass(classId) },
       ]);

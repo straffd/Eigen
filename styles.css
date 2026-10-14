@@ -571,3 +571,95 @@ svg.lg { width: 24px; height: 24px; stroke-width: 1.4; }
   box-shadow: 0 8px 24px rgba(0,0,0,.4);
 }
 .sidebar > * { flex-shrink: 0; }
+
+/* ---------- Active nav item ---------- */
+.row.active { background: var(--hover); color: var(--text); }
+.row.active svg { color: var(--text); }
+
+/* ---------- Toast action ---------- */
+.toast { display: flex; align-items: center; gap: 14px; }
+.toast-action {
+  font-weight: 600;
+  color: var(--sidebar-bg);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ---------- Archive page ---------- */
+.archive-view {
+  width: 100%;
+  max-width: 760px;
+  padding: 72px 0 64px;
+}
+.view-title {
+  font-family: "Instrument Serif", Georgia, serif;
+  font-weight: 400;
+  font-size: 44px;
+  line-height: 1.1;
+  color: var(--logo);
+}
+.view-subtitle { margin-top: 8px; color: var(--text-muted); }
+
+#archive-content { margin-top: 32px; display: flex; flex-direction: column; gap: 28px; }
+
+.archive-heading {
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.archive-list {
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid #262626;
+  border-radius: 12px;
+  overflow: hidden;
+}
+.archive-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+}
+.archive-item + .archive-item { border-top: 1px solid #262626; }
+.archive-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  background: var(--hover);
+  color: var(--text-muted);
+}
+.archive-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.archive-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.archive-meta { margin-top: 2px; font-size: 13px; color: var(--text-faint); }
+.archive-actions { display: flex; align-items: center; gap: 6px; }
+.btn-sm { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; font-size: 13px; }
+.btn-sm svg { width: 15px; height: 15px; }
+.icon-btn.danger:hover { color: #e5867a; }
+
+.archive-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 56px 24px;
+  text-align: center;
+  border: 1px dashed #303030;
+  border-radius: 12px;
+  color: var(--text-muted);
+}
+.archive-empty svg { width: 28px; height: 28px; color: var(--text-faint); }
+.archive-empty-title { margin-top: 12px; font-weight: 500; color: var(--text); }
+.archive-empty-text { margin-top: 4px; max-width: 340px; font-size: 14px; color: var(--text-faint); }
+.archive-status { color: var(--text-faint); }
+
+@media (max-width: 640px) {
+  .archive-view { padding-top: 64px; }
+  .view-title { font-size: 36px; }
+  .archive-item .btn-sm { font-size: 0; gap: 0; padding: 0 9px; }
+  .btn-sm svg { width: 16px; height: 16px; }
+}

@@ -18,6 +18,10 @@ create table if not exists public.folders (
   created_at  timestamptz not null default now()
 );
 
+-- Archiving (added later; safe on existing tables)
+alter table public.classes add column if not exists archived_at timestamptz;
+alter table public.folders add column if not exists archived_at timestamptz;
+
 create index if not exists classes_user_id_idx on public.classes (user_id);
 create index if not exists folders_class_id_idx on public.folders (class_id);
 create index if not exists folders_user_id_idx on public.folders (user_id);
@@ -50,7 +54,7 @@ create policy "folders: owner can update" on public.folders for update to authen
   with check (user_id = auth.uid() and exists (select 1 from public.classes c where c.id = class_id and c.user_id = auth.uid()));
 create policy "folders: owner can delete" on public.folders for delete to authenticated using (user_id = auth.uid());
 
--- ---------- Free plan: at most 4 classes per user (enforced by the database) ----------
+-- ---------- Free plan: at most 4 active (non-archived) classes per user, enforced by the database ----------
 create or replace function public.enforce_class_limit()
 returns trigger
 language plpgsql
@@ -60,14 +64,22 @@ as $$
 declare
   class_limit constant int := 4;
 begin
+  -- Only active classes count. Skip archived inserts and updates that don't make a class active.
+  if new.archived_at is not null then
+    return new;
+  end if;
+  if tg_op = 'UPDATE' and old.archived_at is null then
+    return new;
+  end if;
   -- Only ever count the caller's own classes (this function bypasses RLS).
   if new.user_id is distinct from auth.uid() then
     raise exception 'not allowed' using errcode = '42501';
   end if;
-  -- Serialise inserts per user so two tabs can't both slip past the limit.
+  -- Serialise per user so two tabs can't both slip past the limit.
   perform pg_advisory_xact_lock(hashtext('eigen_class_limit:' || new.user_id::text));
-  if (select count(*) from public.classes where user_id = new.user_id) >= class_limit then
-    raise exception 'class_limit: free plan includes up to % classes', class_limit
+  if (select count(*) from public.classes
+      where user_id = new.user_id and archived_at is null and id <> new.id) >= class_limit then
+    raise exception 'class_limit: free plan includes up to % active classes', class_limit
       using errcode = 'P0001';
   end if;
   return new;
@@ -76,5 +88,5 @@ $$;
 
 drop trigger if exists classes_enforce_limit on public.classes;
 create trigger classes_enforce_limit
-  before insert on public.classes
+  before insert or update of archived_at on public.classes
   for each row execute function public.enforce_class_limit();

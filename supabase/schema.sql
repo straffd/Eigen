@@ -205,3 +205,102 @@ create policy "files bucket: owner can upload" on storage.objects for insert to 
 
 create policy "files bucket: owner can delete" on storage.objects for delete to authenticated
   using (bucket_id = 'files' and (storage.foldername(name))[1] = auth.uid()::text);
+
+-- ---------- AI: text read from files, chat history, daily usage ----------
+-- Text the browser extracts from each file right after upload (pages, slides or sections).
+create table if not exists public.file_texts (
+  file_id     uuid primary key references public.files (id) on delete cascade,
+  user_id     uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  pages       jsonb not null default '[]'::jsonb,   -- array of strings
+  char_count  integer not null default 0,
+  status      text not null default 'ready' check (status in ('ready', 'empty', 'unsupported', 'failed')),
+  created_at  timestamptz not null default now()
+);
+
+create index if not exists file_texts_user_id_idx on public.file_texts (user_id);
+
+alter table public.file_texts enable row level security;
+
+drop policy if exists "file_texts: owner can read"   on public.file_texts;
+drop policy if exists "file_texts: owner can insert" on public.file_texts;
+drop policy if exists "file_texts: owner can update" on public.file_texts;
+drop policy if exists "file_texts: owner can delete" on public.file_texts;
+
+create policy "file_texts: owner can read"   on public.file_texts for select to authenticated using (user_id = auth.uid());
+create policy "file_texts: owner can insert" on public.file_texts for insert to authenticated
+  with check (user_id = auth.uid() and exists (select 1 from public.files f where f.id = file_id and f.user_id = auth.uid()));
+create policy "file_texts: owner can update" on public.file_texts for update to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid() and exists (select 1 from public.files f where f.id = file_id and f.user_id = auth.uid()));
+create policy "file_texts: owner can delete" on public.file_texts for delete to authenticated using (user_id = auth.uid());
+
+grant select, insert, update, delete on public.file_texts to authenticated;
+
+-- Course chat history. Only the course-chat function writes messages; users can read and clear them.
+create table if not exists public.chat_messages (
+  id              uuid primary key default gen_random_uuid(),
+  user_id         uuid not null references auth.users (id) on delete cascade,
+  class_id        uuid not null references public.classes (id) on delete cascade,
+  folder_id       uuid references public.folders (id) on delete set null,
+  role            text not null check (role in ('user', 'assistant')),
+  content         text not null,
+  citations       jsonb,
+  reference_mode  boolean not null default false,
+  created_at      timestamptz not null default now()
+);
+
+create index if not exists chat_messages_class_idx on public.chat_messages (class_id, created_at);
+create index if not exists chat_messages_user_idx on public.chat_messages (user_id);
+
+alter table public.chat_messages enable row level security;
+
+drop policy if exists "chat_messages: owner can read"   on public.chat_messages;
+drop policy if exists "chat_messages: owner can delete" on public.chat_messages;
+
+create policy "chat_messages: owner can read"   on public.chat_messages for select to authenticated using (user_id = auth.uid());
+create policy "chat_messages: owner can delete" on public.chat_messages for delete to authenticated using (user_id = auth.uid());
+
+grant select, delete on public.chat_messages to authenticated;
+
+-- Daily AI usage per user. Written only by the course-chat function (service role).
+create table if not exists public.ai_usage (
+  user_id        uuid not null references auth.users (id) on delete cascade,
+  day            date not null default current_date,
+  messages       integer not null default 0,
+  input_tokens   bigint not null default 0,
+  output_tokens  bigint not null default 0,
+  primary key (user_id, day)
+);
+
+alter table public.ai_usage enable row level security;
+drop policy if exists "ai_usage: owner can read" on public.ai_usage;
+create policy "ai_usage: owner can read" on public.ai_usage for select to authenticated using (user_id = auth.uid());
+grant select on public.ai_usage to authenticated;
+
+-- Counts one message against today's limit. Returns the new count, or null if the limit is reached.
+create or replace function public.ai_consume_message(p_user uuid, p_limit integer)
+returns integer
+language sql
+security definer
+set search_path = public
+as $$
+  insert into public.ai_usage (user_id, day, messages) values (p_user, current_date, 1)
+  on conflict (user_id, day) do update set messages = public.ai_usage.messages + 1
+    where public.ai_usage.messages < p_limit
+  returning messages;
+$$;
+
+create or replace function public.ai_record_tokens(p_user uuid, p_input bigint, p_output bigint)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update public.ai_usage set input_tokens = input_tokens + p_input, output_tokens = output_tokens + p_output
+  where user_id = p_user and day = current_date;
+$$;
+
+revoke all on function public.ai_consume_message(uuid, integer) from public, anon, authenticated;
+revoke all on function public.ai_record_tokens(uuid, bigint, bigint) from public, anon, authenticated;
+grant execute on function public.ai_consume_message(uuid, integer) to service_role;
+grant execute on function public.ai_record_tokens(uuid, bigint, bigint) to service_role;

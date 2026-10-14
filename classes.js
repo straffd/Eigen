@@ -36,7 +36,7 @@
   const isActive = x => !x.archivedAt;
   const activeClasses = () => classes.filter(isActive);
   const atLimit = () => activeClasses().length >= MAX_CLASSES;
-  const LIMIT_MSG = `Free plan includes up to ${MAX_CLASSES} active classes. Archive one to make room.`;
+  const LIMIT_MSG = `Free plan includes up to ${MAX_CLASSES} active courses. Archive one to make room.`;
 
   // ---------- Storage: browser (guest) ----------
   const localStore = {
@@ -141,8 +141,8 @@
     if (/class_limit/.test(msg)) return LIMIT_MSG;
     if (/failed to fetch|network/i.test(msg)) return 'Couldn’t reach Eigen’s servers. Check your connection.';
     if (err?.code === '42P01' || err?.code === 'PGRST205' || /does not exist|schema cache/i.test(msg))
-      return 'Classes aren’t set up in the database yet.';
-    return 'Something went wrong saving your classes.';
+      return 'Courses aren’t set up in the database yet.';
+    return 'Something went wrong saving your courses.';
   }
 
   // Apply a change locally right away, then save it. If saving fails, reload from the source of truth.
@@ -212,7 +212,7 @@
       }
       localStorage.removeItem(GUEST_KEY);
       localStorage.removeItem(legacyKey);
-      toast('Moved your classes into your account.');
+      toast('Moved your courses into your account.');
     } catch (err) {
       console.error(err);
       toast(describeError(err));
@@ -312,13 +312,13 @@
     const active = activeClasses();
     list.replaceChildren(...active.map(renderClass));
     empty.hidden = active.length > 0 && status === 'ready';
-    empty.textContent = status === 'loading' ? 'Loading classes…'
-      : status === 'error' ? 'Couldn’t load your classes.'
-      : 'No classes yet. Press + to add one.';
+    empty.textContent = status === 'loading' ? 'Loading courses…'
+      : status === 'error' ? 'Couldn’t load your courses.'
+      : 'No courses yet. Press + to add one.';
     const full = atLimit() || status !== 'ready';
     addBtn.classList.toggle('is-disabled', full);
     limitNote.hidden = !atLimit();
-    addBtn.setAttribute('aria-label', full ? 'Can’t add a class right now' : 'Add class');
+    addBtn.setAttribute('aria-label', full ? 'Can’t add a course right now' : 'Add course');
     renderArchive();
     document.dispatchEvent(new CustomEvent('eigen:classes'));
   }
@@ -328,12 +328,12 @@
     const li = el(`
       <li class="class" data-class-id="${c.id}">
         <div class="class-item">
-          <button class="row class-toggle" type="button" aria-expanded="${open}">
-            ${icon('chevron', 'chev')}<span class="class-name"></span>
-          </button>
+          <a class="row class-toggle ${location.hash.startsWith('#course/' + c.id) ? 'active' : ''}" href="#course/${c.id}" title="Open ${c.name.replace(/"/g, '&quot;')} AI chat">
+            <span class="chev-btn" role="button" tabindex="0" aria-label="Show folders" aria-expanded="${open}">${icon('chevron', 'chev')}</span><span class="class-name"></span>
+          </a>
           <div class="class-actions">
             <button class="icon-btn" type="button" data-action="add-folder" aria-label="Add folder">${icon('circle-plus', 'sm')}</button>
-            <button class="icon-btn" type="button" aria-label="Class settings">${icon('settings', 'sm')}</button>
+            <button class="icon-btn" type="button" aria-label="Course settings">${icon('settings', 'sm')}</button>
           </div>
         </div>
         <ul class="folder-list" ${open ? '' : 'hidden'}></ul>
@@ -366,7 +366,7 @@
     const slot = el(`<li class="class"><div class="class-item editing"></div></li>`);
     list.append(slot);
     empty.hidden = true;
-    const name = await inlineInput(slot.firstElementChild, { placeholder: 'Class name, e.g. COMP1511' });
+    const name = await inlineInput(slot.firstElementChild, { placeholder: 'Course code, e.g. COMP1511' });
     if (!name || atLimit()) return render();
     const c = { id: uid(), name, folders: [], createdAt: Date.now(), archivedAt: null };
     classes.push(c);
@@ -509,7 +509,7 @@
         <div class="archive-empty">
           ${icon('archive')}
           <p class="archive-empty-title">Nothing archived yet</p>
-          <p class="archive-empty-text">Right-click a class or folder in the sidebar and choose Archive to put it away here.</p>
+          <p class="archive-empty-text">Right-click a course or folder in the sidebar and choose Archive to put it away here.</p>
         </div>`));
       return;
     }
@@ -522,7 +522,7 @@
     };
     const parts = [];
     if (archivedClasses.length) {
-      parts.push(section('Classes', archivedClasses.map(c => {
+      parts.push(section('Courses', archivedClasses.map(c => {
         const n = c.folders.length;
         return archiveItem({
           kind: 'class', iconName: 'archive', name: c.name, classId: c.id,
@@ -684,11 +684,12 @@
       ]);
     } else {
       openMenu(x, y, [
+        { label: 'Open AI chat', icon: 'sparkle', run: () => { location.hash = '#course/' + classId; } },
         { label: 'New folder', icon: 'folder-plus', run: () => addFolder(classId) },
         { label: 'Rename', icon: 'pencil', run: () => renameClass(classId) },
-        { label: 'Archive class', icon: 'archive', run: () => archiveClass(classId) },
+        { label: 'Archive course', icon: 'archive', run: () => archiveClass(classId) },
         '-',
-        { label: 'Delete class', icon: 'trash', danger: true, run: () => deleteClass(classId) },
+        { label: 'Delete course', icon: 'trash', danger: true, run: () => deleteClass(classId) },
       ]);
     }
   });
@@ -699,13 +700,23 @@
     const hidden = location.hash.startsWith('#folder/') && !list.querySelector(`.folder-row[href="${CSS.escape(location.hash)}"]`);
     if (hidden) return render();
     list.querySelectorAll('.folder-row').forEach(a => a.classList.toggle('active', a.getAttribute('href') === location.hash));
+    list.querySelectorAll('.class-toggle').forEach(a => {
+      const id = a.closest('[data-class-id]').dataset.classId;
+      a.classList.toggle('active', location.hash === '#course/' + id || location.hash.startsWith(`#course/${id}/`));
+    });
+  });
+
+  list.addEventListener('keydown', e => {
+    const chev = e.target.closest('.chev-btn');
+    if (chev && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggle(chev.closest('[data-class-id]').dataset.classId); }
   });
 
   list.addEventListener('click', e => {
     const classEl = e.target.closest('[data-class-id]');
     if (!classEl) return;
     if (e.target.closest('[data-action="add-folder"]')) return addFolder(classEl.dataset.classId);
-    if (e.target.closest('.class-toggle')) return toggle(classEl.dataset.classId);
+    if (e.target.closest('.chev-btn')) { e.preventDefault(); return toggle(classEl.dataset.classId); }
+    if (e.target.closest('.class-toggle')) expanded.add(classEl.dataset.classId); // opening the course chat also shows its folders
   });
 
   document.addEventListener('eigen:files-changed', () => { if (status === 'ready') refreshSizes(); });
@@ -714,6 +725,7 @@
   window.eigenUI = { el, icon, toast, confirmDelete, openMenu, closeMenu, inlineInput };
   window.eigenClasses = {
     status: () => status,
+    findClass: id => findClass(id),
     findFolder(folderId) {
       for (const c of classes) {
         const f = c.folders.find(x => x.id === folderId);

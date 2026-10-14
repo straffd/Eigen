@@ -1,5 +1,6 @@
 // Folder page: files stored in Supabase Storage (bucket "files", path <user_id>/<file_id>).
 // Each file has a row in public.files, created before upload so the database can enforce the quota.
+// After upload the file's text is read (extract.js) so the course AI can use it straight away.
 (() => {
   const MAX_FILE = 50 * 1024 * 1024;   // 50 MB per file
   const QUOTA = 250 * 1024 * 1024;     // 250 MB per user (free plan; also enforced by the database)
@@ -14,6 +15,7 @@
   const fileInput = $('file-input');
   const usageEl = $('usage');
   const overlay = $('drop-overlay');
+  const askBtn = $('ask-folder');
   const { el, icon, toast, confirmDelete, openMenu, inlineInput } = window.eigenUI;
 
   let user = null;
@@ -60,20 +62,26 @@
     files = [];
     render();
     try {
-      const [list, all] = await Promise.all([
-        db().from('files').select('id, name, size, mime_type, storage_path, created_at')
-          .eq('folder_id', folderId).eq('uploaded', true),
+      const select = cols => db().from('files').select(cols).eq('folder_id', folderId).eq('uploaded', true);
+      let [list, all] = await Promise.all([
+        select('id, name, size, mime_type, storage_path, created_at, file_texts(status)'),
         db().from('files').select('size'),
       ]);
+      if (list.error) list = await select('id, name, size, mime_type, storage_path, created_at'); // AI tables not set up yet
       if (list.error) throw list.error;
       if (all.error) throw all.error;
       if (token !== loadToken) return;
       files = list.data
-        .map(f => ({ ...f, createdAt: Date.parse(f.created_at) }))
+        .map(f => {
+          const t = Array.isArray(f.file_texts) ? f.file_texts[0] : f.file_texts;
+          return { ...f, createdAt: Date.parse(f.created_at), aiStatus: 'file_texts' in f ? (t?.status ?? null) : 'n/a' };
+        })
         .sort((a, b) => b.createdAt - a.createdAt);
       usage = all.data.reduce((sum, r) => sum + Number(r.size), 0);
       status = 'ready';
       cleanUpStalled();
+      // Read any files uploaded before the AI could read them.
+      for (const f of files) if (f.aiStatus === null) window.eigenReader.readFile(f);
     } catch (err) {
       if (token !== loadToken) return;
       console.error(err);
@@ -118,10 +126,10 @@
         if (up.error) throw up.error;
         const mark = await db().from('files').update({ uploaded: true }).eq('id', id);
         if (mark.error) throw mark.error;
-        if (folderId === targetFolder) {
-          files.unshift({ id, name: file.name, size: file.size, mime_type: file.type, storage_path: path, createdAt: Date.now() });
-        }
+        const row = { id, name: file.name, size: file.size, mime_type: file.type, storage_path: path, createdAt: Date.now(), aiStatus: null };
+        if (folderId === targetFolder) files.unshift(row);
         announce();
+        window.eigenReader.readFile(row, file); // the AI reads it right away
       } catch (err) {
         console.error(err);
         usage -= file.size;
@@ -200,6 +208,7 @@
       titleEl.textContent = classesReady ? 'Folder not found' : '';
       uploadBtn.hidden = true;
       usageEl.hidden = true;
+      askBtn.hidden = true;
       content.replaceChildren(classesReady
         ? el(`<div class="files-empty"><p class="files-empty-title">This folder doesn’t exist anymore.</p><a class="link" href="#">Go home</a></div>`)
         : el(`<p class="files-status">Loading…</p>`));
@@ -214,6 +223,7 @@
     if (!user || !db()) {
       uploadBtn.hidden = true;
       usageEl.hidden = true;
+      askBtn.hidden = true;
       content.replaceChildren(el(`
         <div class="files-empty">
           ${icon('lock')}
@@ -226,6 +236,8 @@
 
     uploadBtn.hidden = status !== 'ready';
     usageEl.hidden = status !== 'ready';
+    askBtn.hidden = c.archivedAt != null;
+    askBtn.href = `#course/${c.id}/f/${f.id}`;
     const pct = Math.min(100, (usage / QUOTA) * 100);
     $('usage-fill').style.width = pct + '%';
     $('usage-fill').classList.toggle('warn', pct >= 90);
@@ -275,10 +287,38 @@
       badge.dataset.ext = ext;
       li.querySelector('.file-name').textContent = f.name;
       li.querySelector('.file-meta').textContent = `${formatSize(Number(f.size))} · Added ${formatDate(f.createdAt)}`;
+      const chip = aiChip(f);
+      if (chip) li.querySelector('.file-text').append(chip);
       ul.append(li);
     }
     content.replaceChildren(ul);
   }
+
+  // Small label showing whether the course AI has read the file.
+  function aiChip(f) {
+    if (f.aiStatus === 'n/a') return null;
+    const kind = window.eigenReader.kindOf(f.name, f.mime_type || '');
+    const readable = window.eigenReader.canRead(f.name, f.mime_type || '');
+    const reading = readable && (f.aiStatus === null || window.eigenReader.isReading(f.id));
+    const [cls, text, title] = reading ? ['reading', 'Reading…', 'The AI is reading this file']
+      : f.aiStatus === 'ready' ? ['ready', 'AI ready', 'The course AI can answer questions from this file']
+      : f.aiStatus === 'empty' ? ['muted', 'No text found', 'No selectable text (scanned PDFs and images aren’t read yet)']
+      : f.aiStatus === 'failed' ? ['muted', 'Couldn’t read', 'Something went wrong reading this file']
+      : kind === 'video' ? ['muted', 'Video · skipped', 'The AI can’t watch videos. Upload a transcript to include it']
+      : ['muted', 'AI can’t read this type', 'Supported: PDF, Word, PowerPoint, Excel, text and code files'];
+    const chip = el(`<span class="ai-chip ${cls}"></span>`);
+    chip.textContent = text;
+    chip.title = title;
+    return chip;
+  }
+
+  document.addEventListener('eigen:file-read', e => {
+    const f = findFile(e.detail.id);
+    if (!f) return;
+    f.aiStatus = e.detail.status;
+    render();
+  });
+  document.addEventListener('eigen:file-reading', e => { if (findFile(e.detail.id)) render(); });
 
   // ---------- Events ----------
   uploadBtn.addEventListener('click', () => fileInput.click());

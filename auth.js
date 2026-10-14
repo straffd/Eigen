@@ -44,7 +44,9 @@
     if (!configured) setMessage(NOT_CONFIGURED, 'info');
   }
 
+  let currentUser = null;
   function renderUser(user) {
+    currentUser = user;
     document.dispatchEvent(new CustomEvent('eigen:user', { detail: user }));
     signedOut.hidden = Boolean(user);
     signedIn.hidden = !user;
@@ -139,5 +141,6 @@
   }
 
   // Exposed for later features (classes, files).
-  window.eigen = { supabase: client };
+  // currentUser lets scripts that load later pick up a sign-in that already happened.
+  window.eigen = { supabase: client, currentUser: () => currentUser };
 })();

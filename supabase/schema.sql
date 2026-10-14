@@ -236,7 +236,7 @@ create policy "file_texts: owner can delete" on public.file_texts for delete to 
 
 grant select, insert, update, delete on public.file_texts to authenticated;
 
--- Course chat history. Only the course-chat function writes messages; users can read and clear them.
+-- Course chat history, saved by the course-chat function or (with your own API key) by the browser.
 create table if not exists public.chat_messages (
   id              uuid primary key default gen_random_uuid(),
   user_id         uuid not null references auth.users (id) on delete cascade,
@@ -255,12 +255,16 @@ create index if not exists chat_messages_user_idx on public.chat_messages (user_
 alter table public.chat_messages enable row level security;
 
 drop policy if exists "chat_messages: owner can read"   on public.chat_messages;
+drop policy if exists "chat_messages: owner can insert" on public.chat_messages;
 drop policy if exists "chat_messages: owner can delete" on public.chat_messages;
 
 create policy "chat_messages: owner can read"   on public.chat_messages for select to authenticated using (user_id = auth.uid());
+-- Users who bring their own API key chat straight from the browser, so they save their own messages.
+create policy "chat_messages: owner can insert" on public.chat_messages for insert to authenticated
+  with check (user_id = auth.uid() and exists (select 1 from public.classes c where c.id = class_id and c.user_id = auth.uid()));
 create policy "chat_messages: owner can delete" on public.chat_messages for delete to authenticated using (user_id = auth.uid());
 
-grant select, delete on public.chat_messages to authenticated;
+grant select, insert, delete on public.chat_messages to authenticated;
 
 -- Daily AI usage per user. Written only by the course-chat function (service role).
 create table if not exists public.ai_usage (

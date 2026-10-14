@@ -12,9 +12,10 @@
   const newBtn = $('chat-new');
   const titleEl = $('chat-title');
   const contextEl = $('chat-context');
+  const keyChip = $('key-chip');
   const { el, icon, toast, confirmDelete } = window.eigenUI;
 
-  let user = null;
+  let user = window.eigen?.currentUser?.() ?? null; // may already be signed in by the time this loads
   let classId = null;
   let folderId = null;
   let messages = [];     // [{ id, role, content, citations, error, pending }]
@@ -88,6 +89,10 @@
     if (m.error) {
       body.classList.add('msg-error');
       body.textContent = m.error;
+      if (m.needsKey) {
+        const b = el(`<button type="button" class="btn-secondary btn-sm add-key" data-action="add-key">${icon('key')}Add API key</button>`);
+        node.append(b);
+      }
     } else if (m.pending && !m.content) {
       body.innerHTML = `<span class="typing" aria-label="Thinking"><i></i><i></i><i></i></span>`;
     } else {
@@ -166,6 +171,7 @@
 
     form.hidden = false;
     newBtn.hidden = !messages.length;
+    renderKeyChip();
     input.placeholder = `Ask about ${folderId ? (window.eigenClasses.findFolder(folderId)?.f.name ?? c.name) : c.name}…`;
     sendBtn.disabled = sending;
     renderContext();
@@ -176,6 +182,13 @@
     else if (!messages.length) log.replaceChildren(emptyState());
     else log.replaceChildren(...messages.map(renderMessage));
     if (stick) log.scrollTop = log.scrollHeight;
+  }
+
+  function renderKeyChip() {
+    const has = window.eigenAI.hasKey();
+    keyChip.classList.toggle('on', has);
+    keyChip.querySelector('span').textContent = has ? 'Your API key' : 'Add API key';
+    keyChip.title = has ? 'Questions use your own Anthropic API key (saved in this browser)' : 'Use your own Anthropic API key';
   }
 
   function renderScope(c) {
@@ -241,6 +254,7 @@
     const text = input.value.trim();
     if (!text || sending || !user || status !== 'ready') return;
     sending = true;
+    messages = messages.filter(m => !m.transient); // clear the last error message
     input.value = '';
     autosize();
     const userMsg = { role: 'user', content: text };
@@ -253,41 +267,57 @@
       const unread = courseFiles.filter(f => f.aiStatus === null && (!folderId || f.folder_id === folderId));
       if (unread.length) await Promise.all(unread.map(f => window.eigenReader.readFile(f)));
 
-      const { data: { session } } = await db().auth.getSession();
-      if (!session) throw new Error('Please sign in again.');
-      const res = await fetch(fnUrl(), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-          apikey: window.EIGEN_CONFIG.SUPABASE_ANON_KEY,
-        },
-        body: JSON.stringify({ class_id: classId, folder_id: folderId, message: text, reference_mode: refToggle.checked }),
-      });
-      if (!res.ok || !res.body) {
-        let msg = res.status === 404 ? 'The AI isn’t set up yet (the course-chat function wasn’t found).' : 'Something went wrong. Please try again.';
-        try { msg = (await res.json()).error || msg; } catch {}
-        throw new Error(msg);
-      }
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
       let finished = false;
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        let nl;
-        while ((nl = buf.indexOf('\n')) >= 0) {
-          const line = buf.slice(0, nl).trim();
-          buf = buf.slice(nl + 1);
-          if (!line) continue;
-          const ev = JSON.parse(line);
-          if (ev.t === 'text') reply.content += ev.text;
-          else if (ev.t === 'cite') reply.citations.push(normalizeCite({ n: ev.n, ...ev.source }));
-          else if (ev.t === 'done') { reply.id = ev.id; finished = true; if (ev.trimmed) toast('This course is large, so only the most relevant pages were used.'); }
-          else if (ev.t === 'error') throw new Error(ev.message);
-          renderSoon();
+      const handle = ev => {
+        if (ev.t === 'text') reply.content += ev.text;
+        else if (ev.t === 'cite') reply.citations.push(normalizeCite({ n: ev.n, ...ev.source }));
+        else if (ev.t === 'done') { reply.id = ev.id; finished = true; if (ev.trimmed) toast('This course is large, so only the most relevant pages were used.'); }
+        else if (ev.t === 'error') throw new Error(ev.message);
+        renderSoon();
+      };
+
+      if (window.eigenAI.hasKey()) {
+        // Your own key: straight from this browser to Anthropic.
+        let failure = null;
+        await window.eigenAI.ask({
+          userId: user.id, classId, folderId, question: text, referenceMode: refToggle.checked,
+          onEvent: ev => { if (ev.t === 'error') failure = ev.message; else handle(ev); },
+        });
+        if (failure) throw new Error(failure);
+      } else {
+        const { data: { session } } = await db().auth.getSession();
+        if (!session) throw new Error('Please sign in again.');
+        const res = await fetch(fnUrl(), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session.access_token}`,
+            apikey: window.EIGEN_CONFIG.SUPABASE_ANON_KEY,
+          },
+          body: JSON.stringify({ class_id: classId, folder_id: folderId, message: text, reference_mode: refToggle.checked }),
+        }).catch(() => null);
+        if (!res || !res.ok || !res.body) {
+          let msg = !res || res.status === 404
+            ? 'The shared AI isn’t set up yet. Add your own Anthropic API key to use the course AI now.'
+            : 'Something went wrong. Please try again.';
+          try { msg = (await res.json()).error || msg; } catch {}
+          const e = new Error(msg);
+          e.needsKey = !res || res.status === 404;
+          throw e;
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let nl;
+          while ((nl = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, nl).trim();
+            buf = buf.slice(nl + 1);
+            if (line) handle(JSON.parse(line));
+          }
         }
       }
       if (!finished) throw new Error('The answer was interrupted. Please try again.');
@@ -300,7 +330,7 @@
         messages.splice(messages.indexOf(userMsg), 2);
         input.value = text;
         autosize();
-        messages.push({ role: 'assistant', error: err.message || 'Something went wrong.', transient: true });
+        messages.push({ role: 'assistant', error: err.message || 'Something went wrong.', needsKey: !!err.needsKey, transient: true });
       } else {
         reply.error = null;
         reply.content += `\n\n*(${err.message || 'Interrupted'})*`;
@@ -308,8 +338,6 @@
     } finally {
       sending = false;
       render();
-      // Errors are shown once, then cleared from the log on the next send.
-      messages = messages.filter(m => !m.transient);
       input.focus();
     }
   }
@@ -321,6 +349,9 @@
   });
   function autosize() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 200) + 'px'; }
   input.addEventListener('input', autosize);
+
+  keyChip.addEventListener('click', () => window.eigenSettings.open());
+  document.addEventListener('eigen:key-changed', () => { if (classId) renderKeyChip(); });
 
   scopeSel.addEventListener('change', () => {
     location.hash = scopeSel.value ? `#course/${classId}/f/${scopeSel.value}` : `#course/${classId}`;
@@ -337,6 +368,7 @@
 
   log.addEventListener('click', async e => {
     if (e.target.closest('[data-action="signin"]')) return $('signin-open').click();
+    if (e.target.closest('[data-action="add-key"]')) return window.eigenSettings.open();
     const ref = e.target.closest('.cite-ref');
     if (ref) {
       const li = ref.closest('.msg').querySelector(`.sources li[data-n="${ref.dataset.n}"]`);

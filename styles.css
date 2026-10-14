@@ -970,3 +970,36 @@ svg.lg { width: 24px; height: 24px; stroke-width: 1.4; }
   .chat-heading .view-title { font-size: 30px; }
   .msg.user .bubble { max-width: 90%; }
 }
+
+/* ---------- Settings & own API key ---------- */
+.settings { width: min(460px, calc(100vw - 32px)); }
+.settings-title { font-family: "Instrument Serif", Georgia, serif; font-weight: 400; font-size: 30px; color: var(--logo); }
+.settings-section { margin-top: 18px; }
+.settings-heading { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 500; }
+.settings-heading svg { width: 16px; height: 16px; color: var(--text-muted); }
+.settings-text { margin-top: 8px; font-size: 14px; color: var(--text-muted); }
+.settings-text.small { margin-top: 16px; font-size: 12px; color: var(--text-faint); }
+.settings-text a { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
+.key-status { margin: 14px 0 12px; padding: 8px 12px; border-radius: 8px; background: var(--input-bg); font-size: 13px; color: var(--text-faint); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.key-status.on { color: #8fc59a; }
+.settings-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.settings-actions .auth-submit { margin-top: 0; padding: 0 18px; }
+.settings-actions .btn-secondary { height: 42px; padding: 0 16px; border-radius: 10px; }
+
+.composer-tools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.key-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--text-faint);
+  transition: color .15s, border-color .15s;
+}
+.key-chip svg { width: 13px; height: 13px; }
+.key-chip:hover { color: var(--text); border-color: #555; }
+.key-chip.on { color: #8fc59a; border-color: #2f4a35; }
+.add-key { margin-top: 10px; }

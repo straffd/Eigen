@@ -745,6 +745,11 @@
     currentUser = next;
     useStore(next === 'guest' ? localStore : supabaseStore(db), next);
   });
-  // auth.js reports the initial (signed-out) state before this script loads.
-  if (currentUser === undefined) { currentUser = 'guest'; useStore(localStore); }
+  // auth.js may have reported the signed-in state before this script loaded.
+  if (currentUser === undefined) {
+    const u = window.eigen?.currentUser?.();
+    const db = window.eigen?.supabase;
+    currentUser = u && db ? u.id : 'guest';
+    useStore(currentUser === 'guest' ? localStore : supabaseStore(db), currentUser);
+  }
 })();

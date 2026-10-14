@@ -18,7 +18,7 @@
   const askBtn = $('ask-folder');
   const { el, icon, toast, confirmDelete, openMenu, inlineInput } = window.eigenUI;
 
-  let user = null;
+  let user = window.eigen?.currentUser?.() ?? null; // may already be signed in by the time this loads
   let folderId = null;
   let files = [];        // uploaded files in the open folder
   let uploads = [];      // [{ id, name, size }] in progress

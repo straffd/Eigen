@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=16">
+  <link rel="stylesheet" href="styles.css?v=18">
 </head>
 <body>
   <!-- Icon sprite -->
@@ -34,6 +34,7 @@
     <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></symbol>
     <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
     <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 20 3M16 7l3 3M14 9l2 2"/></symbol>
     <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
     <symbol id="i-square-plus" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M12 8v8M8 12h8"/></symbol>
     <symbol id="i-circle-plus" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></symbol>
@@ -102,7 +103,7 @@
             </span>
           </button>
           <div class="account-menu" id="account-menu" role="menu" hidden>
-            <a class="row" href="#" role="menuitem"><svg><use href="#i-settings"/></svg>Settings</a>
+            <button class="row" id="open-settings" type="button" role="menuitem"><svg><use href="#i-settings"/></svg>Settings</button>
             <button class="row" id="signout" type="button" role="menuitem"><svg><use href="#i-logout"/></svg>Sign out</button>
           </div>
         </div>
@@ -188,9 +189,12 @@
         <form class="chat-composer" id="chat-form" hidden>
           <textarea id="chat-input" rows="1" placeholder="Ask about this course…" aria-label="Message"></textarea>
           <div class="ask-bar">
-            <label class="ref-toggle" title="When on, every fact is linked to the file and page it came from">
-              <input type="checkbox" id="ref-mode"><span class="switch" aria-hidden="true"></span>Reference mode
-            </label>
+            <div class="composer-tools">
+              <label class="ref-toggle" title="When on, every fact is linked to the file and page it came from">
+                <input type="checkbox" id="ref-mode"><span class="switch" aria-hidden="true"></span>Reference mode
+              </label>
+              <button class="key-chip" id="key-chip" type="button"><svg><use href="#i-key"/></svg><span></span></button>
+            </div>
             <button class="send" id="chat-send" type="submit" aria-label="Send"><svg><use href="#i-arrow-up"/></svg></button>
           </div>
         </form>
@@ -232,6 +236,29 @@
     </p>
   </dialog>
 
+  <!-- Settings -->
+  <dialog class="auth settings" id="settings-dialog" aria-labelledby="settings-title">
+    <button class="icon-btn auth-close" id="settings-close" type="button" aria-label="Close"><svg><use href="#i-close"/></svg></button>
+    <h2 class="settings-title" id="settings-title">Settings</h2>
+    <section class="settings-section">
+      <h3 class="settings-heading"><svg><use href="#i-key"/></svg>Your Anthropic API key</h3>
+      <p class="settings-text">Use your own key for the course AI. It’s saved only in this browser and sent straight to Anthropic, never to Eigen’s servers. Questions are billed to your Anthropic account.</p>
+      <p class="key-status" id="key-status"></p>
+      <form class="auth-form" id="key-form" novalidate>
+        <label class="field">
+          <span>API key</span>
+          <input type="password" id="key-input" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
+        </label>
+        <p class="auth-message" id="key-message" role="status"></p>
+        <div class="settings-actions">
+          <button class="btn-secondary" id="key-remove" type="button">Remove key</button>
+          <button class="auth-submit" id="key-save" type="submit">Save key</button>
+        </div>
+      </form>
+      <p class="settings-text small">Create a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>, and set a monthly spend limit there to stay in control of costs. Anyone with access to this browser can use the saved key, so don’t save it on shared computers.</p>
+    </section>
+  </dialog>
+
   <!-- Right-click menu -->
   <div class="context-menu" id="context-menu" role="menu" hidden></div>
 
@@ -248,12 +275,14 @@
   <div class="toast" id="toast" role="status" hidden></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script>
-  <script src="config.js?v=16"></script>
-  <script src="auth.js?v=16"></script>
-  <script src="classes.js?v=16"></script>
-  <script src="extract.js?v=16"></script>
-  <script src="files.js?v=16"></script>
-  <script src="chat.js?v=16"></script>
+  <script src="config.js?v=18"></script>
+  <script src="auth.js?v=18"></script>
+  <script src="classes.js?v=18"></script>
+  <script src="extract.js?v=18"></script>
+  <script src="files.js?v=18"></script>
+  <script src="ai-direct.js?v=18"></script>
+  <script src="settings.js?v=18"></script>
+  <script src="chat.js?v=18"></script>
   <script>
     const app = document.getElementById('app');
     const toggle = () => app.classList.toggle('collapsed');

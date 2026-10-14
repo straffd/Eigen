@@ -10,9 +10,9 @@
   --text-faint: #6f6f6f;
   --logo: #f2f0eb;
 
-  --sidebar-width: 320px;
+  --sidebar-width: 340px;
   --gutter: 12px;  /* sidebar inner padding: every row lines up to this */
-  --row-h: 36px;
+  --row-h: 42px;
   --radius: 8px;
 }
 
@@ -437,3 +437,31 @@ svg.lg { width: 24px; height: 24px; stroke-width: 1.4; }
 
 .auth-switch { margin-top: 18px; font-size: 13px; color: var(--text-muted); text-align: center; }
 .auth-switch button { color: var(--text); font-weight: 500; text-decoration: underline; text-underline-offset: 3px; }
+
+/* ---------- Sidebar scale: larger, higher-contrast text ---------- */
+.sidebar {
+  --text-muted: #b3b3b3;
+  --text-faint: #8a8a8a;
+  font-size: 17px;
+  gap: 18px;
+}
+.sidebar svg { width: 20px; height: 20px; }
+.sidebar svg.sm { width: 17px; height: 17px; }
+.sidebar svg.lg { width: 26px; height: 26px; }
+
+.sidebar .logo { font-size: 46px; }
+.sidebar .lambda { font-size: 44px; }
+
+.sidebar .search { height: 42px; padding: 0 12px; }
+.sidebar .search kbd { font-size: 13px; }
+
+.sidebar .row { gap: 14px; padding: 0 12px; }
+.sidebar .badge { font-size: 12px; padding: 2px 9px; }
+
+.sidebar .section-header { font-size: 15px; padding: 0 6px 8px 12px; }
+.sidebar .class-toggle { gap: 10px; }
+.sidebar .class-toggle .chev { width: 16px; height: 16px; }
+
+.sidebar .avatar { width: 38px; height: 38px; font-size: 16px; }
+.sidebar .account-name { font-size: 16px; }
+.sidebar .account-sub { font-size: 13px; }

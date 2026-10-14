@@ -121,6 +121,7 @@
         if (folderId === targetFolder) {
           files.unshift({ id, name: file.name, size: file.size, mime_type: file.type, storage_path: path, createdAt: Date.now() });
         }
+        announce();
       } catch (err) {
         console.error(err);
         usage -= file.size;
@@ -137,6 +138,7 @@
   }
 
   const findFile = id => files.find(f => f.id === id);
+  const announce = () => document.dispatchEvent(new CustomEvent('eigen:files-changed'));
 
   async function openFile(id) {
     const f = findFile(id);
@@ -185,6 +187,7 @@
     files = files.filter(x => x.id !== id);
     usage -= Number(f.size);
     render();
+    announce();
   }
 
   // ---------- Render ----------

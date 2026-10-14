@@ -785,3 +785,29 @@ svg.lg { width: 24px; height: 24px; stroke-width: 1.4; }
   .folder-header { align-items: flex-start; flex-direction: column; }
   .file-actions { opacity: 1; }
 }
+
+/* ---------- Folder size & drag to reorder ---------- */
+.folder-size {
+  margin-left: auto;
+  padding-left: 8px;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+.folder-row { position: relative; }
+.folder-row.dragging { opacity: .4; }
+.folder.drop-before > .folder-row::before,
+.folder.drop-after > .folder-row::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--logo);
+  pointer-events: none;
+}
+.folder.drop-before > .folder-row::before { top: -1px; }
+.folder.drop-after > .folder-row::after { bottom: -1px; }
+.class-item.drop-into { background: var(--hover); box-shadow: inset 0 0 0 1px #555; border-radius: var(--radius); }

@@ -22,6 +22,9 @@ create table if not exists public.folders (
 alter table public.classes add column if not exists archived_at timestamptz;
 alter table public.folders add column if not exists archived_at timestamptz;
 
+-- Folder order within a class (drag to reorder). Null = not yet ordered; sorted after by creation time.
+alter table public.folders add column if not exists position double precision;
+
 create index if not exists classes_user_id_idx on public.classes (user_id);
 create index if not exists folders_class_id_idx on public.folders (class_id);
 create index if not exists folders_user_id_idx on public.folders (user_id);

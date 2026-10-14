@@ -2,6 +2,7 @@
 // Signed in: stored in Supabase (tables from supabase/schema.sql).
 // Signed out: stored in this browser's localStorage, and moved into the account on first sign-in.
 // Archived classes and folders are hidden from the sidebar and listed on the Archive page.
+// Folders can be dragged to reorder them or move them to another class.
 (() => {
   const MAX_CLASSES = 4; // Free plan limit (also enforced by the database)
   const MAX_NAME = 40;
@@ -17,7 +18,8 @@
   const toastEl = $('toast');
   const archiveEl = $('archive-content');
 
-  let classes = [];   // [{ id, name, createdAt, archivedAt, folders: [{ id, name, createdAt, archivedAt }] }]
+  let classes = [];   // [{ id, name, createdAt, archivedAt, folders: [{ id, name, createdAt, archivedAt, position }] }]
+  let folderSizes = new Map(); // folderId -> bytes of uploaded files (signed in only)
   let store = null;
   let status = 'loading'; // 'loading' | 'ready' | 'error'
   const expanded = new Set();
@@ -25,6 +27,12 @@
   const uid = () => crypto.randomUUID();
   const findClass = id => classes.find(c => c.id === id);
   const byCreated = (a, b) => a.createdAt - b.createdAt;
+  // Folders without a saved position keep their creation order, after any ordered ones.
+  function orderFolders(c) {
+    c.folders.sort((a, b) => (a.position ?? Infinity) - (b.position ?? Infinity) || byCreated(a, b));
+    c.folders.forEach((f, i) => { if (f.position == null) { f.position = i + 1; f.unsaved = true; } });
+    return c;
+  }
   const isActive = x => !x.archivedAt;
   const activeClasses = () => classes.filter(isActive);
   const atLimit = () => activeClasses().length >= MAX_CLASSES;
@@ -37,7 +45,7 @@
       try { return normalize(JSON.parse(localStorage.getItem(GUEST_KEY)) || []); } catch { return []; }
     },
     persist() {
-      try { localStorage.setItem(GUEST_KEY, JSON.stringify(classes)); } catch {}
+      try { localStorage.setItem(GUEST_KEY, JSON.stringify(classes, (k, v) => (k === 'unsaved' ? undefined : v))); } catch {}
     },
     async addClass() { this.persist(); },
     async renameClass() { this.persist(); },
@@ -47,11 +55,13 @@
     async deleteFolder() { this.persist(); },
     async setClassArchived() { this.persist(); },
     async setFolderArchived() { this.persist(); },
+    async moveFolder() { this.persist(); },
+    async folderSizes() { return new Map(); },
   };
 
   // Older saved data has no archivedAt.
   function normalize(list) {
-    return list.map(c => ({ archivedAt: null, ...c, folders: (c.folders || []).map(f => ({ archivedAt: null, ...f })) }));
+    return list.map(c => orderFolders({ archivedAt: null, ...c, folders: (c.folders || []).map(f => ({ archivedAt: null, position: null, ...f })) }));
   }
 
   // ---------- Storage: Supabase (signed in) ----------
@@ -59,6 +69,15 @@
 
   function supabaseStore(db) {
     const check = ({ error }) => { if (error) throw error; };
+    // Folders created before ordering existed have no stored position. Once a sibling gets one, save
+    // theirs too, otherwise they'd sort after it on the next load.
+    async function saveUnsaved(c, except) {
+      const pending = c.folders.filter(x => x.unsaved && x !== except);
+      const results = await Promise.all(pending.map(x => db.from('folders').update({ position: x.position }).eq('id', x.id)));
+      results.forEach(check);
+      pending.forEach(x => { x.unsaved = false; });
+    }
+
     // Remove stored file bytes before their rows disappear with a folder or class.
     async function removeFiles(folderIds) {
       if (!folderIds.length) return;
@@ -73,17 +92,16 @@
       kind: 'supabase',
       async list() {
         const { data, error } = await db.from('classes')
-          .select('id, name, created_at, archived_at, folders(id, name, created_at, archived_at)');
+          .select('id, name, created_at, archived_at, folders(id, name, created_at, archived_at, position)');
         if (error) throw error;
-        return data.map(c => ({
+        return data.map(c => orderFolders({
           id: c.id,
           name: c.name,
           createdAt: Date.parse(c.created_at),
           archivedAt: c.archived_at ? Date.parse(c.archived_at) : null,
           folders: (c.folders || [])
             .map(f => ({ id: f.id, name: f.name, createdAt: Date.parse(f.created_at),
-                         archivedAt: f.archived_at ? Date.parse(f.archived_at) : null }))
-            .sort(byCreated),
+                         archivedAt: f.archived_at ? Date.parse(f.archived_at) : null, position: f.position })),
         })).sort(byCreated);
       },
       async addClass(c) { check(await db.from('classes').insert({ id: c.id, name: c.name, archived_at: iso(c.archivedAt) })); },
@@ -92,7 +110,10 @@
         await removeFiles(c.folders.map(f => f.id));
         check(await db.from('classes').delete().eq('id', c.id));
       },
-      async addFolder(c, f) { check(await db.from('folders').insert({ id: f.id, class_id: c.id, name: f.name, archived_at: iso(f.archivedAt) })); },
+      async addFolder(c, f) {
+        check(await db.from('folders').insert({ id: f.id, class_id: c.id, name: f.name, archived_at: iso(f.archivedAt), position: f.position }));
+        await saveUnsaved(c, f);
+      },
       async renameFolder(c, f) { check(await db.from('folders').update({ name: f.name }).eq('id', f.id)); },
       async deleteFolder(c, f) {
         await removeFiles([f.id]);
@@ -100,6 +121,18 @@
       },
       async setClassArchived(c) { check(await db.from('classes').update({ archived_at: iso(c.archivedAt) }).eq('id', c.id)); },
       async setFolderArchived(c, f) { check(await db.from('folders').update({ archived_at: iso(f.archivedAt) }).eq('id', f.id)); },
+      async moveFolder(c, f) {
+        check(await db.from('folders').update({ class_id: c.id, position: f.position }).eq('id', f.id));
+        f.unsaved = false;
+        await saveUnsaved(c, f);
+      },
+      async folderSizes() {
+        const { data, error } = await db.from('files').select('folder_id, size').eq('uploaded', true);
+        if (error) return new Map(); // file storage not set up yet: just show no sizes
+        const sizes = new Map();
+        for (const r of data) sizes.set(r.folder_id, (sizes.get(r.folder_id) || 0) + Number(r.size));
+        return sizes;
+      },
     };
   }
 
@@ -132,6 +165,7 @@
       if (gen !== generation) return;
       classes = data;
       status = 'ready';
+      refreshSizes();
     } catch (err) {
       if (gen !== generation) return;
       console.error(err);
@@ -141,6 +175,24 @@
     }
     render();
   }
+
+  async function refreshSizes() {
+    const gen = generation;
+    const sizes = await store.folderSizes();
+    if (gen !== generation) return;
+    folderSizes = sizes;
+    list.querySelectorAll('[data-folder-id]').forEach(li => {
+      const el = li.querySelector('.folder-size');
+      if (el) el.textContent = sizeLabel(li.dataset.folderId);
+    });
+  }
+
+  function formatSize(bytes) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${(bytes / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+  }
+  const sizeLabel = folderId => (folderSizes.get(folderId) ? formatSize(folderSizes.get(folderId)) : '');
 
   // Move classes made while signed out into a newly signed-in account (only if the account has none).
   // Also picks up classes saved per-account in the browser by the previous version of Eigen.
@@ -156,7 +208,7 @@
       for (const c of guest) {
         if (isActive(c) && ++active > MAX_CLASSES) continue;
         await store.addClass(c);
-        for (const f of c.folders) await store.addFolder(c, f);
+        for (const f of c.folders) await store.addFolder(c, f); // includes position
       }
       localStorage.removeItem(GUEST_KEY);
       localStorage.removeItem(legacyKey);
@@ -173,6 +225,7 @@
     store = next;
     status = 'loading';
     classes = [];
+    folderSizes = new Map();
     expanded.clear();
     render();
     await refresh();
@@ -299,9 +352,10 @@
   function renderFolder(c, f) {
     const li = el(`
       <li class="folder" data-folder-id="${f.id}">
-        <a class="row folder-row ${location.hash === '#folder/' + f.id ? 'active' : ''}" href="#folder/${f.id}">${icon('folder')}<span class="folder-name"></span></a>
+        <a class="row folder-row ${location.hash === '#folder/' + f.id ? 'active' : ''}" href="#folder/${f.id}" draggable="true">${icon('folder')}<span class="folder-name"></span><span class="folder-size"></span></a>
       </li>`);
     li.querySelector('.folder-name').textContent = f.name;
+    li.querySelector('.folder-size').textContent = sizeLabel(f.id);
     return li;
   }
 
@@ -330,7 +384,8 @@
     folders.append(slot);
     const name = await inlineInput(slot.querySelector('.slot'), { placeholder: 'Folder name' });
     if (!name || !findClass(classId)) return render();
-    const f = { id: uid(), name, createdAt: Date.now(), archivedAt: null };
+    const last = c.folders[c.folders.length - 1];
+    const f = { id: uid(), name, createdAt: Date.now(), archivedAt: null, position: (last?.position ?? 0) + 1 };
     c.folders.push(f);
     await commit('addFolder', c, f);
   }
@@ -493,6 +548,84 @@
     else action === 'restore' ? restoreFolder(classId, folderId) : deleteFolder(classId, folderId);
   });
 
+  // ---------- Moving folders ----------
+  // Moves a folder into `toClassId` before `beforeFolderId` (or to the end). Only one row is saved:
+  // the moved folder gets a position halfway between its new neighbours.
+  async function moveFolder(fromClassId, folderId, toClassId, beforeFolderId = null) {
+    const from = findClass(fromClassId);
+    const to = findClass(toClassId);
+    const f = from?.folders.find(x => x.id === folderId);
+    if (!f || !to || beforeFolderId === folderId) return;
+    const siblings = to.folders.filter(x => x !== f);
+    let i = beforeFolderId ? siblings.findIndex(x => x.id === beforeFolderId) : siblings.length;
+    if (i < 0) i = siblings.length;
+    const prev = siblings[i - 1]?.position;
+    const next = siblings[i]?.position;
+    const position = prev == null && next == null ? 1 : prev == null ? next - 1 : next == null ? prev + 1 : (prev + next) / 2;
+    if (from === to && to.folders.indexOf(f) === i) return; // dropped where it already was
+    from.folders = from.folders.filter(x => x !== f);
+    f.position = position;
+    to.folders.splice(i, 0, f);
+    expanded.add(to.id);
+    await commit('moveFolder', to, f);
+  }
+
+  let drag = null; // { classId, folderId }
+  function clearDropMarks() {
+    list.querySelectorAll('.drop-before, .drop-after, .drop-into').forEach(n => n.classList.remove('drop-before', 'drop-after', 'drop-into'));
+  }
+  // Where would a drop at this point land? -> { classId, beforeFolderId, mark: [element, cssClass] }
+  function dropTarget(e) {
+    const folderEl = e.target.closest('[data-folder-id]');
+    const classEl = e.target.closest('[data-class-id]');
+    if (!classEl) return null;
+    const classId = classEl.dataset.classId;
+    const c = findClass(classId);
+    if (folderEl && folderEl.dataset.folderId !== drag.folderId) {
+      const r = folderEl.getBoundingClientRect();
+      const after = e.clientY > r.top + r.height / 2;
+      const visible = c.folders.filter(isActive);
+      const idx = visible.findIndex(x => x.id === folderEl.dataset.folderId);
+      const before = after ? visible[idx + 1]?.id ?? null : folderEl.dataset.folderId;
+      return { classId, beforeFolderId: before, mark: [folderEl, after ? 'drop-after' : 'drop-before'] };
+    }
+    if (folderEl) return null; // over itself
+    return { classId, beforeFolderId: null, mark: [classEl.querySelector('.class-item'), 'drop-into'] };
+  }
+
+  list.addEventListener('dragstart', e => {
+    const folderEl = e.target.closest('[data-folder-id]');
+    const classEl = e.target.closest('[data-class-id]');
+    if (!folderEl || !classEl) return;
+    drag = { classId: classEl.dataset.classId, folderId: folderEl.dataset.folderId };
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('application/x-eigen-folder', drag.folderId);
+    requestAnimationFrame(() => folderEl.classList.add('dragging'));
+  });
+  list.addEventListener('dragover', e => {
+    if (!drag) return;
+    const t = dropTarget(e);
+    clearDropMarks();
+    if (!t) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    t.mark[0].classList.add(t.mark[1]);
+  });
+  list.addEventListener('dragleave', e => { if (!list.contains(e.relatedTarget)) clearDropMarks(); });
+  list.addEventListener('drop', e => {
+    if (!drag) return;
+    const t = dropTarget(e);
+    clearDropMarks();
+    if (!t) return;
+    e.preventDefault();
+    moveFolder(drag.classId, drag.folderId, t.classId, t.beforeFolderId);
+  });
+  list.addEventListener('dragend', () => {
+    drag = null;
+    clearDropMarks();
+    list.querySelectorAll('.dragging').forEach(n => n.classList.remove('dragging'));
+  });
+
   function toggle(classId) {
     expanded.has(classId) ? expanded.delete(classId) : expanded.add(classId);
     render();
@@ -543,6 +676,9 @@
       openMenu(x, y, [
         { label: 'Rename', icon: 'pencil', run: () => renameFolder(classId, folderId) },
         { label: 'Archive folder', icon: 'archive', run: () => archiveFolder(classId, folderId) },
+        ...activeClasses().filter(c => c.id !== classId).map(c => ({
+          label: `Move to ${c.name}`, icon: 'folder', run: () => moveFolder(classId, folderId, c.id),
+        })),
         '-',
         { label: 'Delete folder', icon: 'trash', danger: true, run: () => deleteFolder(classId, folderId) },
       ]);
@@ -571,6 +707,8 @@
     if (e.target.closest('[data-action="add-folder"]')) return addFolder(classEl.dataset.classId);
     if (e.target.closest('.class-toggle')) return toggle(classEl.dataset.classId);
   });
+
+  document.addEventListener('eigen:files-changed', () => { if (status === 'ready') refreshSizes(); });
 
   // Shared with files.js.
   window.eigenUI = { el, icon, toast, confirmDelete, openMenu, closeMenu, inlineInput };

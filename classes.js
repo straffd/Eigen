@@ -1,8 +1,10 @@
 // Classes and their folders in the sidebar.
-// Stored in localStorage for now, one list per signed-in account ("guest" when signed out).
+// Signed in: stored in Supabase (tables from supabase/schema.sql).
+// Signed out: stored in this browser's localStorage, and moved into the account on first sign-in.
 (() => {
-  const MAX_CLASSES = 4; // Free plan limit
+  const MAX_CLASSES = 4; // Free plan limit (also enforced by the database)
   const MAX_NAME = 40;
+  const GUEST_KEY = 'eigen.classes.guest';
 
   const $ = id => document.getElementById(id);
   const list = $('class-list');
@@ -13,21 +15,132 @@
   const confirmDialog = $('confirm-dialog');
   const toastEl = $('toast');
 
-  // ---------- Storage ----------
-  let storageKey = 'eigen.classes.guest';
-  let classes = [];
+  let classes = [];   // [{ id, name, createdAt, folders: [{ id, name, createdAt }] }]
+  let store = null;
+  let status = 'loading'; // 'loading' | 'ready' | 'error'
   const expanded = new Set();
 
-  function load() {
-    try { classes = JSON.parse(localStorage.getItem(storageKey)) || []; }
-    catch { classes = []; }
-  }
-  function save() {
-    try { localStorage.setItem(storageKey, JSON.stringify(classes)); } catch {}
+  const uid = () => crypto.randomUUID();
+  const findClass = id => classes.find(c => c.id === id);
+  const byCreated = (a, b) => a.createdAt - b.createdAt;
+
+  // ---------- Storage: browser (guest) ----------
+  const localStore = {
+    kind: 'local',
+    async list() {
+      try { return JSON.parse(localStorage.getItem(GUEST_KEY)) || []; } catch { return []; }
+    },
+    persist() {
+      try { localStorage.setItem(GUEST_KEY, JSON.stringify(classes)); } catch {}
+    },
+    async addClass() { this.persist(); },
+    async renameClass() { this.persist(); },
+    async deleteClass() { this.persist(); },
+    async addFolder() { this.persist(); },
+    async renameFolder() { this.persist(); },
+    async deleteFolder() { this.persist(); },
+  };
+
+  // ---------- Storage: Supabase (signed in) ----------
+  function supabaseStore(db) {
+    const check = ({ error }) => { if (error) throw error; };
+    return {
+      kind: 'supabase',
+      async list() {
+        const { data, error } = await db.from('classes')
+          .select('id, name, created_at, folders(id, name, created_at)');
+        if (error) throw error;
+        return data.map(c => ({
+          id: c.id,
+          name: c.name,
+          createdAt: Date.parse(c.created_at),
+          folders: (c.folders || [])
+            .map(f => ({ id: f.id, name: f.name, createdAt: Date.parse(f.created_at) }))
+            .sort(byCreated),
+        })).sort(byCreated);
+      },
+      async addClass(c) { check(await db.from('classes').insert({ id: c.id, name: c.name })); },
+      async renameClass(c) { check(await db.from('classes').update({ name: c.name }).eq('id', c.id)); },
+      async deleteClass(c) { check(await db.from('classes').delete().eq('id', c.id)); },
+      async addFolder(c, f) { check(await db.from('folders').insert({ id: f.id, class_id: c.id, name: f.name })); },
+      async renameFolder(c, f) { check(await db.from('folders').update({ name: f.name }).eq('id', f.id)); },
+      async deleteFolder(c, f) { check(await db.from('folders').delete().eq('id', f.id)); },
+    };
   }
 
-  const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
-  const findClass = id => classes.find(c => c.id === id);
+  function describeError(err) {
+    const msg = err?.message || '';
+    if (/class_limit/.test(msg)) return `Free plan includes up to ${MAX_CLASSES} classes.`;
+    if (/failed to fetch|network/i.test(msg)) return 'Couldn’t reach Eigen’s servers. Check your connection.';
+    if (err?.code === '42P01' || err?.code === 'PGRST205' || /does not exist|schema cache/i.test(msg))
+      return 'Classes aren’t set up in the database yet.';
+    return 'Something went wrong saving your classes.';
+  }
+
+  // Apply a change locally right away, then save it. If saving fails, reload from the source of truth.
+  async function commit(op, ...args) {
+    render();
+    try {
+      await store[op](...args);
+    } catch (err) {
+      console.error(err);
+      toast(describeError(err));
+      await refresh();
+    }
+  }
+
+  let generation = 0; // ignores results from a store we've since switched away from
+  async function refresh() {
+    const gen = generation;
+    try {
+      const data = await store.list();
+      if (gen !== generation) return;
+      classes = data;
+      status = 'ready';
+    } catch (err) {
+      if (gen !== generation) return;
+      console.error(err);
+      status = 'error';
+      classes = [];
+      toast(describeError(err));
+    }
+    render();
+  }
+
+  // Move classes made while signed out into a newly signed-in account (only if the account has none).
+  // Also picks up classes saved per-account in the browser by the previous version of Eigen.
+  async function importGuestClasses(userId) {
+    const legacyKey = 'eigen.classes.' + userId;
+    let guest = await localStore.list();
+    if (!guest.length) {
+      try { guest = JSON.parse(localStorage.getItem(legacyKey)) || []; } catch { guest = []; }
+    }
+    if (!guest.length || classes.length) return;
+    try {
+      for (const c of guest.slice(0, MAX_CLASSES)) {
+        await store.addClass(c);
+        for (const f of c.folders) await store.addFolder(c, f);
+      }
+      localStorage.removeItem(GUEST_KEY);
+      localStorage.removeItem(legacyKey);
+      toast('Moved your classes into your account.');
+    } catch (err) {
+      console.error(err);
+      toast(describeError(err));
+    }
+    await refresh();
+  }
+
+  async function useStore(next, userId) {
+    generation++;
+    store = next;
+    status = 'loading';
+    classes = [];
+    expanded.clear();
+    render();
+    await refresh();
+    if (store === next && store.kind === 'supabase' && status === 'ready') await importGuestClasses(userId);
+  }
 
   // ---------- Helpers ----------
   function icon(name, cls = '') {
@@ -92,11 +205,14 @@
   // ---------- Render ----------
   function render() {
     list.replaceChildren(...classes.map(renderClass));
-    empty.hidden = classes.length > 0;
-    const full = classes.length >= MAX_CLASSES;
-    limitNote.hidden = !full;
+    empty.hidden = classes.length > 0 && status === 'ready';
+    empty.textContent = status === 'loading' ? 'Loading classes…'
+      : status === 'error' ? 'Couldn’t load your classes.'
+      : 'No classes yet. Press + to add one.';
+    const full = classes.length >= MAX_CLASSES || status !== 'ready';
     addBtn.classList.toggle('is-disabled', full);
-    addBtn.setAttribute('aria-label', full ? 'Class limit reached' : 'Add class');
+    limitNote.hidden = !(classes.length >= MAX_CLASSES);
+    addBtn.setAttribute('aria-label', full ? 'Can’t add a class right now' : 'Add class');
   }
 
   function renderClass(c) {
@@ -135,6 +251,7 @@
 
   // ---------- Actions ----------
   async function addClass() {
+    if (status !== 'ready') return;
     if (classes.length >= MAX_CLASSES) {
       toast(`Free plan includes up to ${MAX_CLASSES} classes.`);
       return;
@@ -143,12 +260,10 @@
     list.append(slot);
     empty.hidden = true;
     const name = await inlineInput(slot.firstElementChild, { placeholder: 'Class name, e.g. COMP1511' });
-    if (name) {
-      const c = { id: uid(), name, folders: [], createdAt: Date.now() };
-      classes.push(c);
-      save();
-    }
-    render();
+    if (!name || classes.length >= MAX_CLASSES) return render();
+    const c = { id: uid(), name, folders: [], createdAt: Date.now() };
+    classes.push(c);
+    await commit('addClass', c);
   }
 
   async function addFolder(classId) {
@@ -161,11 +276,10 @@
     const slot = el(`<li class="folder"><div class="folder-row editing">${icon('folder')}<span class="slot"></span></div></li>`);
     folders.append(slot);
     const name = await inlineInput(slot.querySelector('.slot'), { placeholder: 'Folder name' });
-    if (name) {
-      c.folders.push({ id: uid(), name, createdAt: Date.now() });
-      save();
-    }
-    render();
+    if (!name || !findClass(classId)) return render();
+    const f = { id: uid(), name, createdAt: Date.now() };
+    c.folders.push(f);
+    await commit('addFolder', c, f);
   }
 
   async function renameClass(classId) {
@@ -174,8 +288,9 @@
     if (!c || !row) return;
     row.classList.add('editing');
     const name = await inlineInput(row, { value: c.name });
-    if (name && name !== c.name) { c.name = name; save(); }
-    render();
+    if (!name || name === c.name) return render();
+    c.name = name;
+    await commit('renameClass', c);
   }
 
   async function renameFolder(classId, folderId) {
@@ -185,8 +300,9 @@
     if (!f || !li) return;
     li.innerHTML = `<div class="folder-row editing">${icon('folder')}<span class="slot"></span></div>`;
     const name = await inlineInput(li.querySelector('.slot'), { value: f.name });
-    if (name && name !== f.name) { f.name = name; save(); }
-    render();
+    if (!name || name === f.name) return render();
+    f.name = name;
+    await commit('renameFolder', c, f);
   }
 
   async function deleteClass(classId) {
@@ -198,8 +314,7 @@
     if (!ok) return;
     classes = classes.filter(x => x.id !== classId);
     expanded.delete(classId);
-    save();
-    render();
+    await commit('deleteClass', c);
   }
 
   async function deleteFolder(classId, folderId) {
@@ -209,8 +324,7 @@
     const ok = await confirmDelete(`Delete ${f.name}?`, 'This can’t be undone.');
     if (!ok) return;
     c.folders = c.folders.filter(x => x.id !== folderId);
-    save();
-    render();
+    await commit('deleteFolder', c, f);
   }
 
   function toggle(classId) {
@@ -285,16 +399,16 @@
     if (e.target.closest('.class-toggle')) return toggle(classEl.dataset.classId);
   });
 
-  // Switch to the signed-in user's classes.
+  // Switch storage when the signed-in user changes.
+  let currentUser;
   document.addEventListener('eigen:user', e => {
-    const key = 'eigen.classes.' + (e.detail?.id || 'guest');
-    if (key === storageKey) return;
-    storageKey = key;
-    expanded.clear();
-    load();
-    render();
+    const user = e.detail;
+    const db = window.eigen?.supabase;
+    const next = user && db ? user.id : 'guest';
+    if (next === currentUser) return;
+    currentUser = next;
+    useStore(next === 'guest' ? localStore : supabaseStore(db), next);
   });
-
-  load();
-  render();
+  // auth.js reports the initial (signed-out) state before this script loads.
+  if (currentUser === undefined) { currentUser = 'guest'; useStore(localStore); }
 })();

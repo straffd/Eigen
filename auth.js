@@ -45,6 +45,7 @@
   }
 
   function renderUser(user) {
+    document.dispatchEvent(new CustomEvent('eigen:user', { detail: user }));
     signedOut.hidden = Boolean(user);
     signedIn.hidden = !user;
     if (!user) return;

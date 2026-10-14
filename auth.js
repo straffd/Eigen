@@ -114,7 +114,9 @@
         dialog.close();
       }
     } catch (err) {
-      setMessage(err.message || 'Something went wrong. Try again.');
+      const offline = /failed to fetch|network/i.test(err.message || '');
+      setMessage(offline ? 'Couldn’t reach Eigen’s servers. Check your connection and try again.'
+                         : err.message || 'Something went wrong. Try again.');
     } finally {
       submit.disabled = false;
     }

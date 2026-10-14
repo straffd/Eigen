@@ -1,7 +1,7 @@
 // Supabase project settings.
-// Fill these in from Supabase → Project Settings → API.
-// The anon key is designed to be public; access is enforced by Row Level Security.
+// From Supabase → Connect (or Project Settings → Data API / API Keys).
+// The publishable key is designed to be public; access is enforced by Row Level Security.
 window.EIGEN_CONFIG = {
-  SUPABASE_URL: '',
-  SUPABASE_ANON_KEY: '',
+  SUPABASE_URL: 'https://swlflhnlpnfhtglzlvmw.supabase.co',
+  SUPABASE_ANON_KEY: 'sb_publishable_43R0isLqAJqe-yJy_uSjiQ_84Fsjk2A',
 };

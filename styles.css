@@ -362,15 +362,15 @@ svg.lg { width: 24px; height: 24px; stroke-width: 1.4; }
   display: flex;
   align-items: baseline;
   justify-content: center;
-  gap: 10px;
+  gap: .25em;
   font-family: "Instrument Serif", Georgia, serif;
   font-weight: 400;
   font-size: 30px;
   line-height: 1.1;
   color: var(--logo);
 }
-.auth-logo { font-size: 36px; letter-spacing: -1px; }
-.auth-logo .lambda { margin-left: 3px; font-size: 34px; }
+.auth-logo { font-size: inherit; }
+.auth-logo .lambda { margin-left: 2px; font-size: .9em; }
 .auth-subtitle { margin-top: 10px; font-size: 14px; color: var(--text-muted); text-align: center; }
 
 .auth-providers { display: flex; flex-direction: column; gap: 8px; margin-top: 24px; }

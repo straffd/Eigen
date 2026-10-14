@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=3">
 </head>
 <body>
   <!-- Icon sprite -->
@@ -26,6 +26,9 @@
     <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></symbol>
     <symbol id="i-paperclip" viewBox="0 0 24 24"><path d="m21 11-8.6 8.6a5 5 0 0 1-7-7l8.5-8.6a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9"/></symbol>
     <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></symbol>
     <symbol id="i-settings" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
   </svg>
 
@@ -88,6 +91,32 @@
           </li>
         </ul>
       </section>
+
+      <footer class="account" id="account">
+        <!-- Signed out -->
+        <button class="account-row" id="signin-open" type="button">
+          <span class="avatar avatar-empty"><svg class="sm"><use href="#i-users"/></svg></span>
+          <span class="account-text">
+            <span class="account-name">Sign in</span>
+            <span class="account-sub">Save your classes and files</span>
+          </span>
+        </button>
+
+        <!-- Signed in -->
+        <div class="account-signed-in" hidden>
+          <button class="account-row" id="account-menu-btn" type="button" aria-haspopup="menu" aria-expanded="false">
+            <span class="avatar" id="account-avatar"></span>
+            <span class="account-text">
+              <span class="account-name" id="account-name"></span>
+              <span class="account-sub" id="account-email"></span>
+            </span>
+          </button>
+          <div class="account-menu" id="account-menu" role="menu" hidden>
+            <a class="row" href="#" role="menuitem"><svg><use href="#i-settings"/></svg>Settings</a>
+            <button class="row" id="signout" type="button" role="menuitem"><svg><use href="#i-logout"/></svg>Sign out</button>
+          </div>
+        </div>
+      </footer>
     </aside>
 
     <main class="main">
@@ -125,6 +154,48 @@
     </main>
   </div>
 
+  <!-- Sign-in dialog -->
+  <dialog class="auth" id="auth-dialog" aria-labelledby="auth-title">
+    <button class="icon-btn auth-close" id="auth-close" type="button" aria-label="Close"><svg><use href="#i-close"/></svg></button>
+    <div class="auth-logo">Eigen<span class="lambda">λ</span></div>
+    <h2 class="auth-title" id="auth-title">Sign in to Eigen</h2>
+    <p class="auth-subtitle" id="auth-subtitle">Keep your classes, files and due dates in one place.</p>
+
+    <div class="auth-providers">
+      <button class="provider" type="button" data-provider="google">
+        <svg class="brand" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
+        Continue with Google
+      </button>
+      <button class="provider" type="button" data-provider="azure">
+        <svg class="brand" viewBox="0 0 24 24"><path fill="#F25022" d="M3 3h8.5v8.5H3z"/><path fill="#7FBA00" d="M12.5 3H21v8.5h-8.5z"/><path fill="#00A4EF" d="M3 12.5h8.5V21H3z"/><path fill="#FFB900" d="M12.5 12.5H21V21h-8.5z"/></svg>
+        Continue with Microsoft
+      </button>
+    </div>
+
+    <div class="auth-divider"><span>or</span></div>
+
+    <form class="auth-form" id="auth-form" novalidate>
+      <label class="field">
+        <span>Email</span>
+        <input type="email" name="email" autocomplete="email" placeholder="z1234567@ad.unsw.edu.au" required>
+      </label>
+      <label class="field">
+        <span>Password</span>
+        <input type="password" name="password" autocomplete="current-password" placeholder="At least 8 characters" minlength="8" required>
+      </label>
+      <p class="auth-message" id="auth-message" role="status"></p>
+      <button class="auth-submit" id="auth-submit" type="submit">Sign in</button>
+    </form>
+
+    <p class="auth-switch">
+      <span id="auth-switch-text">New to Eigen?</span>
+      <button type="button" id="auth-switch">Create an account</button>
+    </p>
+  </dialog>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+  <script src="config.js?v=3"></script>
+  <script src="auth.js?v=3"></script>
   <script>
     const app = document.getElementById('app');
     const toggle = () => app.classList.toggle('collapsed');

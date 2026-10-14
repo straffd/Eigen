@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=13">
+  <link rel="stylesheet" href="styles.css?v=14">
 </head>
 <body>
   <!-- Icon sprite -->
@@ -25,6 +25,10 @@
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></symbol>
     <symbol id="i-folder-plus" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 10v6M9 13h6"/></symbol>
     <symbol id="i-restore" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15V4M7 9l5-5 5 5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></symbol>
+    <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
     <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
     <symbol id="i-square-plus" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M12 8v8M8 12h8"/></symbol>
     <symbol id="i-circle-plus" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></symbol>
@@ -140,6 +144,25 @@
         </header>
         <div id="archive-content"></div>
       </section>
+
+      <section class="folder-view" data-view="folder" hidden aria-labelledby="folder-title">
+        <header class="view-header folder-header">
+          <div class="folder-heading">
+            <p class="breadcrumb" id="folder-crumb"></p>
+            <h1 class="view-title" id="folder-title"></h1>
+          </div>
+          <button class="btn-primary" id="upload-btn" type="button" hidden><svg><use href="#i-upload"/></svg>Upload</button>
+          <input type="file" id="file-input" multiple hidden>
+        </header>
+        <div class="usage" id="usage" hidden>
+          <div class="usage-bar"><span id="usage-fill"></span></div>
+          <p class="usage-text" id="usage-text"></p>
+        </div>
+        <div id="folder-content"></div>
+        <div class="drop-overlay" id="drop-overlay" hidden>
+          <div><svg><use href="#i-upload"/></svg><p>Drop to upload</p></div>
+        </div>
+      </section>
     </main>
   </div>
 
@@ -193,9 +216,10 @@
   <div class="toast" id="toast" role="status" hidden></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script>
-  <script src="config.js?v=13"></script>
-  <script src="auth.js?v=13"></script>
-  <script src="classes.js?v=13"></script>
+  <script src="config.js?v=14"></script>
+  <script src="auth.js?v=14"></script>
+  <script src="classes.js?v=14"></script>
+  <script src="files.js?v=14"></script>
   <script>
     const app = document.getElementById('app');
     const toggle = () => app.classList.toggle('collapsed');
@@ -205,7 +229,8 @@
 
     // Views: #archive shows the archive, anything else shows home.
     function showView() {
-      const view = location.hash === '#archive' ? 'archive' : 'home';
+      const hash = location.hash;
+      const view = hash === '#archive' ? 'archive' : hash.startsWith('#folder/') ? 'folder' : 'home';
       document.querySelectorAll('[data-view]').forEach(el => { el.hidden = el.dataset.view !== view; });
       document.querySelectorAll('[data-nav]').forEach(el => el.classList.toggle('active', el.dataset.nav === view));
       document.querySelector('.main').scrollTop = 0;

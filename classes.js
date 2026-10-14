@@ -59,6 +59,16 @@
 
   function supabaseStore(db) {
     const check = ({ error }) => { if (error) throw error; };
+    // Remove stored file bytes before their rows disappear with a folder or class.
+    async function removeFiles(folderIds) {
+      if (!folderIds.length) return;
+      const { data, error } = await db.from('files').select('storage_path').in('folder_id', folderIds);
+      if (error) {
+        if (error.code === 'PGRST205' || error.code === '42P01') return; // files not set up yet
+        throw error;
+      }
+      if (data.length) check(await db.storage.from('files').remove(data.map(r => r.storage_path)));
+    }
     return {
       kind: 'supabase',
       async list() {
@@ -78,10 +88,16 @@
       },
       async addClass(c) { check(await db.from('classes').insert({ id: c.id, name: c.name, archived_at: iso(c.archivedAt) })); },
       async renameClass(c) { check(await db.from('classes').update({ name: c.name }).eq('id', c.id)); },
-      async deleteClass(c) { check(await db.from('classes').delete().eq('id', c.id)); },
+      async deleteClass(c) {
+        await removeFiles(c.folders.map(f => f.id));
+        check(await db.from('classes').delete().eq('id', c.id));
+      },
       async addFolder(c, f) { check(await db.from('folders').insert({ id: f.id, class_id: c.id, name: f.name, archived_at: iso(f.archivedAt) })); },
       async renameFolder(c, f) { check(await db.from('folders').update({ name: f.name }).eq('id', f.id)); },
-      async deleteFolder(c, f) { check(await db.from('folders').delete().eq('id', f.id)); },
+      async deleteFolder(c, f) {
+        await removeFiles([f.id]);
+        check(await db.from('folders').delete().eq('id', f.id));
+      },
       async setClassArchived(c) { check(await db.from('classes').update({ archived_at: iso(c.archivedAt) }).eq('id', c.id)); },
       async setFolderArchived(c, f) { check(await db.from('folders').update({ archived_at: iso(f.archivedAt) }).eq('id', f.id)); },
     };
@@ -206,9 +222,9 @@
   }
 
   // Inline text input used for create and rename. Resolves with the trimmed name, or null if cancelled.
-  function inlineInput(container, { value = '', placeholder = '', className = '' }) {
+  function inlineInput(container, { value = '', placeholder = '', className = '', maxLength = MAX_NAME }) {
     return new Promise(resolve => {
-      const input = el(`<input class="inline-input ${className}" maxlength="${MAX_NAME}" spellcheck="false">`);
+      const input = el(`<input class="inline-input ${className}" maxlength="${maxLength}" spellcheck="false">`);
       input.value = value;
       input.placeholder = placeholder;
       container.replaceChildren(input);
@@ -230,7 +246,16 @@
   }
 
   // ---------- Render ----------
+  // Keep the class holding the open folder expanded, so the folder shows as selected.
+  function expandOpenFolder() {
+    if (!location.hash.startsWith('#folder/')) return;
+    const id = location.hash.slice(8);
+    const c = classes.find(x => x.folders.some(f => f.id === id));
+    if (c) expanded.add(c.id);
+  }
+
   function render() {
+    expandOpenFolder();
     const active = activeClasses();
     list.replaceChildren(...active.map(renderClass));
     empty.hidden = active.length > 0 && status === 'ready';
@@ -242,6 +267,7 @@
     limitNote.hidden = !atLimit();
     addBtn.setAttribute('aria-label', full ? 'Can’t add a class right now' : 'Add class');
     renderArchive();
+    document.dispatchEvent(new CustomEvent('eigen:classes'));
   }
 
   function renderClass(c) {
@@ -273,7 +299,7 @@
   function renderFolder(c, f) {
     const li = el(`
       <li class="folder" data-folder-id="${f.id}">
-        <button class="row folder-row" type="button">${icon('folder')}<span class="folder-name"></span></button>
+        <a class="row folder-row ${location.hash === '#folder/' + f.id ? 'active' : ''}" href="#folder/${f.id}">${icon('folder')}<span class="folder-name"></span></a>
       </li>`);
     li.querySelector('.folder-name').textContent = f.name;
     return li;
@@ -337,7 +363,7 @@
     if (!c) return;
     const n = c.folders.length;
     const ok = await confirmDelete(`Delete ${c.name}?`,
-      n ? `This also deletes its ${n} folder${n === 1 ? '' : 's'}. This can’t be undone.` : 'This can’t be undone.');
+      n ? `This also deletes its ${n} folder${n === 1 ? '' : 's'} and any files inside. This can’t be undone.` : 'This can’t be undone.');
     if (!ok) return;
     classes = classes.filter(x => x.id !== classId);
     expanded.delete(classId);
@@ -348,7 +374,8 @@
     const c = findClass(classId);
     const f = c?.folders.find(x => x.id === folderId);
     if (!f) return;
-    const ok = await confirmDelete(`Delete ${f.name}?`, 'This can’t be undone.');
+    const ok = await confirmDelete(`Delete ${f.name}?`,
+      store.kind === 'supabase' ? 'Any files in this folder will be deleted too. This can’t be undone.' : 'This can’t be undone.');
     if (!ok) return;
     c.folders = c.folders.filter(x => x.id !== folderId);
     await commit('deleteFolder', c, f);
@@ -532,6 +559,11 @@
 
   // ---------- Events ----------
   addBtn.addEventListener('click', addClass);
+  window.addEventListener('hashchange', () => {
+    const hidden = location.hash.startsWith('#folder/') && !list.querySelector(`.folder-row[href="${CSS.escape(location.hash)}"]`);
+    if (hidden) return render();
+    list.querySelectorAll('.folder-row').forEach(a => a.classList.toggle('active', a.getAttribute('href') === location.hash));
+  });
 
   list.addEventListener('click', e => {
     const classEl = e.target.closest('[data-class-id]');
@@ -539,6 +571,19 @@
     if (e.target.closest('[data-action="add-folder"]')) return addFolder(classEl.dataset.classId);
     if (e.target.closest('.class-toggle')) return toggle(classEl.dataset.classId);
   });
+
+  // Shared with files.js.
+  window.eigenUI = { el, icon, toast, confirmDelete, openMenu, closeMenu, inlineInput };
+  window.eigenClasses = {
+    status: () => status,
+    findFolder(folderId) {
+      for (const c of classes) {
+        const f = c.folders.find(x => x.id === folderId);
+        if (f) return { c, f };
+      }
+      return null;
+    },
+  };
 
   // Switch storage when the signed-in user changes.
   let currentUser;

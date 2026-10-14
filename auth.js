@@ -26,7 +26,7 @@
   function setMode(next) {
     mode = next;
     const signup = mode === 'signup';
-    $('auth-title').textContent = signup ? 'Create your account' : 'Sign in to Eigen';
+    $('auth-title-text').textContent = signup ? 'Join' : 'Sign in to';
     submit.textContent = signup ? 'Create account' : 'Sign in';
     $('auth-switch-text').textContent = signup ? 'Already have an account?' : 'New to Eigen?';
     $('auth-switch').textContent = signup ? 'Sign in' : 'Create an account';

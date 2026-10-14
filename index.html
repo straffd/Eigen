@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=4">
+  <link rel="stylesheet" href="styles.css?v=5">
 </head>
 <body>
   <!-- Icon sprite -->
@@ -155,10 +155,9 @@
   </div>
 
   <!-- Sign-in dialog -->
-  <dialog class="auth" id="auth-dialog" aria-labelledby="auth-title">
+  <dialog class="auth" id="auth-dialog" aria-labelledby="auth-title-text">
     <button class="icon-btn auth-close" id="auth-close" type="button" aria-label="Close"><svg><use href="#i-close"/></svg></button>
-    <div class="auth-logo">Eigen<span class="lambda">λ</span></div>
-    <h2 class="auth-title" id="auth-title">Sign in to Eigen</h2>
+    <h2 class="auth-title"><span id="auth-title-text">Sign in to</span> <span class="auth-logo">Eigen<span class="lambda">λ</span></span></h2>
     <p class="auth-subtitle" id="auth-subtitle">Keep your classes, files and due dates in one place.</p>
 
     <div class="auth-providers">
@@ -194,8 +193,8 @@
   </dialog>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-  <script src="config.js?v=4"></script>
-  <script src="auth.js?v=4"></script>
+  <script src="config.js?v=5"></script>
+  <script src="auth.js?v=5"></script>
   <script>
     const app = document.getElementById('app');
     const toggle = () => app.classList.toggle('collapsed');

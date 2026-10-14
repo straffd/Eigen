@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=18">
+  <link rel="stylesheet" href="styles.css?v=19">
 </head>
 <body>
   <!-- Icon sprite -->
@@ -241,21 +241,49 @@
     <button class="icon-btn auth-close" id="settings-close" type="button" aria-label="Close"><svg><use href="#i-close"/></svg></button>
     <h2 class="settings-title" id="settings-title">Settings</h2>
     <section class="settings-section">
-      <h3 class="settings-heading"><svg><use href="#i-key"/></svg>Your Anthropic API key</h3>
-      <p class="settings-text">Use your own key for the course AI. It’s saved only in this browser and sent straight to Anthropic, never to Eigen’s servers. Questions are billed to your Anthropic account.</p>
-      <p class="key-status" id="key-status"></p>
-      <form class="auth-form" id="key-form" novalidate>
-        <label class="field">
-          <span>API key</span>
-          <input type="password" id="key-input" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
-        </label>
-        <p class="auth-message" id="key-message" role="status"></p>
-        <div class="settings-actions">
-          <button class="btn-secondary" id="key-remove" type="button">Remove key</button>
-          <button class="auth-submit" id="key-save" type="submit">Save key</button>
-        </div>
-      </form>
-      <p class="settings-text small">Create a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>, and set a monthly spend limit there to stay in control of costs. Anyone with access to this browser can use the saved key, so don’t save it on shared computers.</p>
+      <h3 class="settings-heading"><svg><use href="#i-sparkle"/></svg>AI provider</h3>
+      <p class="settings-text">Use your own API key for the course AI. Keys are saved only in this browser and sent straight to the provider, never to Eigen’s servers. Questions are billed to your own account.</p>
+      <div class="provider-switch" role="radiogroup" aria-label="AI provider">
+        <button type="button" role="radio" data-provider="claude">Claude</button>
+        <button type="button" role="radio" data-provider="gemini">Gemini</button>
+      </div>
+
+      <div class="provider-panel" data-panel="claude">
+        <p class="key-status" id="key-status"></p>
+        <form class="auth-form" id="key-form" novalidate>
+          <label class="field">
+            <span>Anthropic API key</span>
+            <input type="password" id="key-input" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
+          </label>
+          <p class="auth-message" id="key-message" role="status"></p>
+          <div class="settings-actions">
+            <button class="btn-secondary" id="key-remove" type="button">Remove key</button>
+            <button class="auth-submit" id="key-save" type="submit">Save key</button>
+          </div>
+        </form>
+        <p class="settings-text small">Create a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> (separate from a Claude Pro plan). Best answers, with exact quoted citations in Reference mode.</p>
+      </div>
+
+      <div class="provider-panel" data-panel="gemini" hidden>
+        <p class="key-status" id="gkey-status"></p>
+        <form class="auth-form" id="gkey-form" novalidate>
+          <label class="field">
+            <span>Gemini API key</span>
+            <input type="password" id="gkey-input" placeholder="AIza…" autocomplete="off" spellcheck="false">
+          </label>
+          <label class="field" id="gmodel-field" hidden>
+            <span>Model</span>
+            <select id="gmodel"></select>
+          </label>
+          <p class="auth-message" id="gkey-message" role="status"></p>
+          <div class="settings-actions">
+            <button class="btn-secondary" id="gkey-remove" type="button">Remove key</button>
+            <button class="auth-submit" id="gkey-save" type="submit">Save key</button>
+          </div>
+        </form>
+        <p class="settings-text small">Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com</a>. The free tier has low rate limits, and Google may use free-tier prompts (including your file text) to improve its products. In Reference mode, Gemini’s page references are approximate.</p>
+      </div>
+      <p class="settings-text small">Anyone with access to this browser can use saved keys, so don’t save them on shared computers.</p>
     </section>
   </dialog>
 
@@ -275,14 +303,14 @@
   <div class="toast" id="toast" role="status" hidden></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script>
-  <script src="config.js?v=18"></script>
-  <script src="auth.js?v=18"></script>
-  <script src="classes.js?v=18"></script>
-  <script src="extract.js?v=18"></script>
-  <script src="files.js?v=18"></script>
-  <script src="ai-direct.js?v=18"></script>
-  <script src="settings.js?v=18"></script>
-  <script src="chat.js?v=18"></script>
+  <script src="config.js?v=19"></script>
+  <script src="auth.js?v=19"></script>
+  <script src="classes.js?v=19"></script>
+  <script src="extract.js?v=19"></script>
+  <script src="files.js?v=19"></script>
+  <script src="ai-direct.js?v=19"></script>
+  <script src="settings.js?v=19"></script>
+  <script src="chat.js?v=19"></script>
   <script>
     const app = document.getElementById('app');
     const toggle = () => app.classList.toggle('collapsed');

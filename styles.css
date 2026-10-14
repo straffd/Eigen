@@ -1003,3 +1003,13 @@ svg.lg { width: 24px; height: 24px; stroke-width: 1.4; }
 .key-chip:hover { color: var(--text); border-color: #555; }
 .key-chip.on { color: #8fc59a; border-color: #2f4a35; }
 .add-key { margin-top: 10px; }
+
+/* ---------- Provider switch ---------- */
+.provider-switch { display: inline-flex; margin-top: 14px; padding: 3px; border-radius: 10px; background: var(--input-bg); border: 1px solid var(--border); }
+.provider-switch button { height: 30px; padding: 0 16px; border-radius: 7px; font-size: 14px; color: var(--text-muted); transition: background .15s, color .15s; }
+.provider-switch button.active { background: var(--logo); color: var(--sidebar-bg); font-weight: 500; }
+.provider-panel .key-status { margin-top: 14px; }
+.field select {
+  height: 40px; padding: 0 12px; background: var(--input-bg); border: 1px solid var(--border); border-radius: 10px;
+  color: var(--text); font: inherit; font-size: 14px;
+}

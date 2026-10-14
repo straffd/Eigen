@@ -109,7 +109,7 @@
             <p class="src-quote"></p>
           </li>`);
         li.querySelector('.src-name').textContent = c.fileName;
-        li.querySelector('.src-page').textContent = pageLabel(c);
+        li.querySelector('.src-page').textContent = pageLabel(c) + (c.approximate ? ' · approximate' : '');
         li.querySelector('.src-quote').textContent = c.quote ? `“${c.quote.length > 220 ? c.quote.slice(0, 220) + '…' : c.quote}”` : '';
         src.querySelector('ol').append(li);
       }
@@ -186,9 +186,10 @@
 
   function renderKeyChip() {
     const has = window.eigenAI.hasKey();
+    const name = window.eigenAI.getProvider() === 'gemini' ? 'Gemini' : 'Claude';
     keyChip.classList.toggle('on', has);
-    keyChip.querySelector('span').textContent = has ? 'Your API key' : 'Add API key';
-    keyChip.title = has ? 'Questions use your own Anthropic API key (saved in this browser)' : 'Use your own Anthropic API key';
+    keyChip.querySelector('span').textContent = has ? `${name} · your key` : 'Add API key';
+    keyChip.title = has ? `Questions use your own ${name} API key (saved in this browser)` : 'Use your own Claude or Gemini API key';
   }
 
   function renderScope(c) {
@@ -248,7 +249,7 @@
     render({ scroll: true });
   }
 
-  const normalizeCite = c => ({ n: c.n, fileId: c.fileId, fileName: c.fileName, folderName: c.folderName, page: c.page, quote: c.quote });
+  const normalizeCite = c => ({ n: c.n, fileId: c.fileId, fileName: c.fileName, folderName: c.folderName, page: c.page, quote: c.quote, approximate: !!c.approximate });
 
   async function send() {
     const text = input.value.trim();
@@ -298,7 +299,7 @@
         }).catch(() => null);
         if (!res || !res.ok || !res.body) {
           let msg = !res || res.status === 404
-            ? 'The shared AI isn’t set up yet. Add your own Anthropic API key to use the course AI now.'
+            ? 'The shared AI isn’t set up yet. Add your own Claude or Gemini API key to use the course AI now.'
             : 'Something went wrong. Please try again.';
           try { msg = (await res.json()).error || msg; } catch {}
           const e = new Error(msg);

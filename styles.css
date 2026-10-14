@@ -1,10 +1,10 @@
 :root {
-  --sidebar-bg: #1c1c1c;
-  --main-bg: #2e2e2e;
-  --input-bg: #141414;
-  --surface: #262626;
-  --hover: #262626;
-  --border: #3e3e3e;
+  --sidebar-bg: #141414;
+  --main-bg: #242424;
+  --input-bg: #0c0c0c;
+  --surface: #1c1c1c;
+  --hover: #1e1e1e;
+  --border: #343434;
   --text: #e2e2e2;
   --text-muted: #9a9a9a;
   --text-faint: #6f6f6f;
@@ -221,7 +221,7 @@ svg.lg { width: 24px; height: 24px; stroke-width: 1.4; }
   border-radius: 16px;
   transition: border-color .15s;
 }
-.ask:focus-within { border-color: #505050; }
+.ask:focus-within { border-color: #464646; }
 .ask textarea {
   display: block;
   width: 100%;
@@ -266,7 +266,7 @@ svg.lg { width: 24px; height: 24px; stroke-width: 1.4; }
   border-radius: 12px;
   transition: border-color .15s, background .15s;
 }
-.card:hover { border-color: var(--border); background: #2a2a2a; }
+.card:hover { border-color: var(--border); background: #202020; }
 .card-head { display: flex; align-items: center; gap: 8px; font-weight: 500; }
 .card-head svg { color: var(--text-muted); width: 16px; height: 16px; }
 .card-empty { margin-top: 12px; font-size: 13px; color: var(--text-faint); }

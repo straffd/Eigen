@@ -1,8 +1,8 @@
 :root {
   --sidebar-bg: #141414;
-  --main-bg: #242424;
+  --main-bg: #1a1a1a;
   --input-bg: #0c0c0c;
-  --surface: #1c1c1c;
+  --surface: #111111;
   --hover: #1e1e1e;
   --border: #343434;
   --text: #e2e2e2;
@@ -262,11 +262,11 @@ svg.lg { width: 24px; height: 24px; stroke-width: 1.4; }
   padding: 14px 16px;
   min-height: 108px;
   background: var(--surface);
-  border: 1px solid transparent;
+  border: 1px solid #262626;
   border-radius: 12px;
   transition: border-color .15s, background .15s;
 }
-.card:hover { border-color: var(--border); background: #202020; }
+.card:hover { border-color: var(--border); background: #141414; }
 .card-head { display: flex; align-items: center; gap: 8px; font-weight: 500; }
 .card-head svg { color: var(--text-muted); width: 16px; height: 16px; }
 .card-empty { margin-top: 12px; font-size: 13px; color: var(--text-faint); }

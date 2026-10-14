@@ -82,7 +82,8 @@
   modelSel.addEventListener('change', () => { ai.setGeminiModel(modelSel.value); changed(); });
   const gemini = keyForm({
     prefix: 'gkey', label: 'Gemini', get: ai.getGeminiKey, set: ai.setGeminiKey, verify: ai.verifyGeminiKey,
-    pattern: /^AIza[\w-]{30,}$/, patternMsg: 'That doesn’t look like a Gemini API key. It should start with AIza.',
+    // Google has more than one key format, so only reject things that clearly aren't keys and let Google decide.
+    pattern: /^[\w.\-]{20,}$/, patternMsg: 'That doesn’t look like an API key. Copy the whole key from Google AI Studio, without spaces.',
     onSaved: result => {
       geminiModels = result?.models || [];
       if (!result) ai.setGeminiModel('');

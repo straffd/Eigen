@@ -31,6 +31,8 @@
     $('auth-switch-text').textContent = signup ? 'Already have an account?' : 'New to Eigen?';
     $('auth-switch').textContent = signup ? 'Sign in' : 'Create an account';
     form.password.autocomplete = signup ? 'new-password' : 'current-password';
+    form.password.placeholder = signup ? 'At least 8 characters' : '';
+    form.password.minLength = signup ? 8 : 0;
     setMessage('');
   }
 
@@ -91,7 +93,8 @@
     const email = form.email.value.trim();
     const password = form.password.value;
     if (!form.email.checkValidity()) return setMessage('Enter a valid email address.');
-    if (password.length < 8) return setMessage('Password must be at least 8 characters.');
+    if (!password) return setMessage('Enter your password.');
+    if (mode === 'signup' && password.length < 8) return setMessage('Password must be at least 8 characters.');
     if (!configured) return setMessage(NOT_CONFIGURED, 'info');
 
     submit.disabled = true;

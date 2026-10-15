@@ -1051,3 +1051,7 @@ svg.lg { width: 24px; height: 24px; stroke-width: 1.4; }
 }
 .hl.closest { background: rgba(255, 214, 0, .2); box-shadow: 0 0 0 1px rgba(230, 180, 0, .6); outline: 1px dashed rgba(200, 150, 0, .7); outline-offset: 1px; }
 .text-page mark.closest { background: rgba(255, 214, 0, .14); outline: 1px dashed rgba(255, 214, 0, .5); outline-offset: 1px; }
+.viewer-section + .viewer-section { margin-top: 22px; padding-top: 18px; border-top: 1px solid #262626; }
+.viewer-section-label { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 13px; color: var(--text-muted); }
+.viewer-section.focus .viewer-section-label { color: var(--text); }
+.viewer-note.small { margin: 0 0 10px; font-size: 12px; }

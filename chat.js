@@ -46,6 +46,8 @@
         .map(x => `<button type="button" class="cite-ref" data-n="${x[1]}">${x[1]}</button>`).join('')}</span>`);
   }
   function markdown(text) {
+    // Older answers may contain raw [[src:…]] markers the model wrote in an unexpected format: hide them.
+    text = text.replace(/\[\[?\s*src\s*:[^\]]*\]\]?/gi, '').replace(/ +([.,;:!?])/g, '$1');
     const lines = esc(text).split('\n');
     const out = [];
     let list = null, para = [], code = null;
@@ -393,7 +395,12 @@
       const cite = msg?.citations?.find(c => c.n === n);
       const li = msgEl.querySelector(`.sources li[data-n="${n}"]`);
       if (li) { li.classList.remove('flash'); void li.offsetWidth; li.classList.add('flash'); }
-      if (cite) window.eigenViewer.open(cite);
+      // Numbers written together (e.g. "1 2") point to the pages a sentence came from: show them all.
+      const group = ref.classList.contains('cite-ref')
+        ? [...ref.closest('.cite-refs').querySelectorAll('.cite-ref')].map(b => msg?.citations?.find(c => c.n === Number(b.dataset.n))).filter(Boolean)
+        : [];
+      if (group.length > 1) window.eigenViewer.open(group, group.indexOf(cite));
+      else if (cite) window.eigenViewer.open(cite);
       else if (ref.dataset.file) openSource(ref.dataset.file, ref.dataset.page);
       return;
     }

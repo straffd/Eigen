@@ -251,7 +251,8 @@
       lines.push(
         'REFERENCE MODE IS ON. The student needs to know where every piece of information comes from:',
         '- After each sentence or bullet that uses the materials, add a reference marker in exactly this form: [[src:D:P|QUOTE]] where D is the document number, P is the page/slide/section number, and QUOTE is a short passage copied word for word from that page (5 to 25 words) that supports the sentence. Example: [[src:2:14|A stack is a last-in, first-out structure]]. Use one marker per source; you may put several in a row.',
-        '- The QUOTE must be copied exactly from the page text, not paraphrased, and must not contain the characters ] or |.',
+        '- The QUOTE must be copied exactly from the page text, not paraphrased or shortened with "...", and must not contain the characters ] or |.',
+        '- Each marker names exactly one page. If a sentence uses several pages, write one marker per page, e.g. [[src:1:7|...]][[src:1:10|...]].',
         '- Only use document and page numbers that appear in the materials. Never make one up.',
         '- Prefer the uploaded materials over general knowledge whenever both could answer.',
         '- Anything not from the materials must be labelled inline as (general knowledge, not from your files).',
@@ -281,6 +282,27 @@
   }
 
   // Turns [[src:D:P|quote]] markers into Eigen's numbered citations as text streams in.
+  // Models don't always follow the format exactly, so this also accepts several pages in one marker
+  // ("1:7, 1:10", "1:7-9", "7"), single brackets, and quotes shortened with "...". Anything that still
+  // can't be understood is removed, never shown.
+  const MARKER = /\[\[?\s*src\s*:\s*([^\]|]*?)\s*(?:\|([^\]]*))?\]\]?/g;
+  const PARTIAL = /^\[\[?\s*(s(r(c([^\]]*(\][^\]]?)?)?)?)?)?$/;
+
+  function parseRefs(loc, docCount) {
+    const refs = [];
+    let lastDoc = docCount === 1 ? 1 : null;
+    for (const part of loc.split(/[,;]|\band\b/i)) {
+      const m = /^\s*(?:(\d+)\s*:\s*)?(\d+)(?:\s*[-–]\s*(\d+))?\s*$/.exec(part);
+      if (!m) continue;
+      const d = m[1] ? Number(m[1]) : lastDoc;
+      if (!d) continue;
+      lastDoc = d;
+      const from = Number(m[2]), to = m[3] ? Math.min(Number(m[3]), from + 5) : from;
+      for (let p = from; p <= to && refs.length < 8; p++) refs.push({ d, p });
+    }
+    return refs;
+  }
+
   function citationParser(documents, onEvent) {
     const citations = [];
     const keyToN = new Map();
@@ -288,13 +310,13 @@
     let out = '';
     const emit = text => { if (text) { out += text; onEvent({ t: 'text', text }); } };
     const norm = x => x.toLowerCase().replace(/\s+/g, ' ').trim();
-    function handle(d, p, quote, before) {
+
+    function cite(d, p, fragments, claim) {
       const doc = documents[d - 1];
-      if (!doc || !doc.pages.has(p)) return ''; // made-up reference: drop it
-      quote = (quote || '').trim().replace(/^["“']|["”']$/g, '');
-      // Keep the quote only if it really is on that page.
+      if (!doc || !doc.pages.has(p)) return null; // made-up reference: drop it
+      // Keep only quote fragments that really are on that page.
       const pageText = norm(doc.material.pages[p - 1] || '');
-      const verified = quote.length >= 8 && pageText.includes(norm(quote));
+      const verified = fragments.filter(f => f.length >= 8 && pageText.includes(norm(f)));
       const key = `${doc.material.fileId}:${p}`;
       let n = keyToN.get(key);
       if (!n) {
@@ -302,36 +324,62 @@
         keyToN.set(key, n);
         const source = {
           fileId: doc.material.fileId, fileName: doc.material.fileName, folderName: doc.material.folderName, page: p,
-          quote: verified ? quote : '', quotes: verified ? [quote] : [], claim: lastSentence(out + before), approximate: !verified,
+          quote: verified[0] || '', quotes: verified, claim, approximate: !verified.length,
         };
         citations.push({ ...source, n });
         onEvent({ t: 'cite', n, source });
-      } else if (verified && !citations[n - 1].quotes.includes(quote)) {
+      } else {
         const c = citations[n - 1];
-        c.quotes.push(quote);
-        if (!c.quote) { c.quote = quote; c.approximate = false; }
-        onEvent({ t: 'cite', n, source: { ...c } });
+        const added = verified.filter(f => !c.quotes.includes(f));
+        if (added.length) {
+          c.quotes.push(...added);
+          if (!c.quote) { c.quote = c.quotes[0]; c.approximate = false; }
+          onEvent({ t: 'cite', n, source: { ...c } });
+        }
       }
-      return `[[${n}]]`;
+      return n;
     }
+
+    function handle(loc, quote, before) {
+      const refs = parseRefs(loc || '', documents.length);
+      const fragments = (quote || '').split(/\.{3,}|…/).map(f => f.trim().replace(/^["“'‘]+|["”'’]+$/g, '').trim()).filter(Boolean);
+      const claim = lastSentence(out + before);
+      const ns = [];
+      for (const { d, p } of refs) {
+        const n = cite(d, p, fragments, claim);
+        if (n && !ns.includes(n)) ns.push(n);
+      }
+      return ns.map(n => `[[${n}]]`).join('');
+    }
+
     return {
-      push(chunk) {
+      push(chunk, final = false) {
         buf += chunk;
-        let m;
-        const re = /\[\[src:(\d+):(\d+)(?:\|([^\]]{0,600}))?\]\]/g;
-        let last = 0, text = '';
-        while ((m = re.exec(buf))) {
+        let m, last = 0, text = '', held = -1;
+        MARKER.lastIndex = 0;
+        while ((m = MARKER.exec(buf))) {
+          // "[[src:...]" at the very end: the second "]" may still be on its way.
+          if (!final && m[0][1] === '[' && !m[0].endsWith(']]') && MARKER.lastIndex === buf.length) { held = m.index; break; }
           const before = buf.slice(last, m.index);
-          const marker = handle(Number(m[1]), Number(m[2]), m[3], text + before);
+          const marker = handle(m[1], m[2], text + before);
           text += marker ? before + marker : before.replace(/[ \t]+$/, ''); // a dropped marker takes its space with it
-          last = re.lastIndex;
+          last = MARKER.lastIndex;
+        }
+        if (held >= 0) {
+          text += buf.slice(last, held); buf = buf.slice(held);
+          const ws = /[ \t]+$/.exec(text);
+          if (ws) { text = text.slice(0, ws.index); buf = ws[0] + buf; }
+          emit(text); return;
         }
         buf = buf.slice(last);
+        if (final) { emit((text + buf.replace(/\[\[?\s*src[^\]]*\]?\]?/gi, '')).replace(/[ \t]+$/, '')); buf = ''; return; }
         // Hold back a possible half-received marker at the end (it may continue in the next chunk).
         let cut = -1;
-        const open = buf.lastIndexOf('[[');
-        if (open >= 0 && buf.length - open < 700 && /^\[\[(s(r(c(:[^\]]*(\][^\]]?)?)?)?)?)?$/.test(buf.slice(open))) cut = open;
-        else if (buf.endsWith('[')) cut = buf.length - 1;
+        const open = buf.lastIndexOf('[');
+        for (let i = Math.max(0, buf.length - 800); i < buf.length; i++) {
+          if (buf[i] === '[' && PARTIAL.test(buf.slice(i))) { cut = i; break; }
+        }
+        if (cut < 0 && open === buf.length - 1) cut = open;
         if (cut >= 0) { text += buf.slice(0, cut); buf = buf.slice(cut); }
         else { text += buf; buf = ''; }
         // Keep trailing spaces until the next chunk, in case a marker that gets dropped follows them.
@@ -339,7 +387,10 @@
         if (ws) { text = text.slice(0, ws.index); buf = ws[0] + buf; }
         emit(text.replace(/\]\]\s+(?=\[\[\d+\]\])/g, ']]'));
       },
-      end() { emit(buf.replace(/\[\[src:[^\]]*\]?\]?$/, '')); buf = ''; return { answer: out, citations }; },
+      end() {
+        this.push('', true);
+        return { answer: out, citations };
+      },
     };
   }
 

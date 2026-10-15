@@ -120,44 +120,98 @@
 
   // ---------- Rendering ----------
   const unitName = name => (/\.pdf$/i.test(name) ? 'Page' : /\.pptx?$/i.test(name) ? 'Slide' : 'Section');
+  const NOTES = {
+    closest: 'Closest matching passage: the AI didn’t give an exact quote here, so this is the part of the page that best matches its answer.',
+    approx: 'Approximate reference: the AI pointed to this page, but no matching passage could be found. It may be in an image.',
+    none: 'Couldn’t pinpoint the passage on this page. It may be in an image or laid out differently.',
+  };
+  const noteFor = (kind, c) => (kind === 'closest' ? NOTES.closest : kind === 'none' ? (c.approximate ? NOTES.approx : NOTES.none) : null);
 
-  async function render() {
+  function render() {
+    return current.items.length > 1 ? renderMany() : renderOne();
+  }
+
+  // One cited page, with page-by-page navigation.
+  async function renderOne() {
     const token = ++renderToken;
-    const c = current;
+    const c = current.items[0];
     titleEl.textContent = c.fileName;
     titleEl.title = c.fileName;
     pageEl.textContent = '';
     noteEl.hidden = true;
+    prevBtn.hidden = nextBtn.hidden = false;
     body.replaceChildren(el(`<p class="viewer-status">Loading…</p>`));
     let entry;
     try { entry = await loadFile(c.fileId); }
     catch (err) {
-      if (token === renderToken) body.replaceChildren(el(`<p class="viewer-status"></p>`)), body.firstChild.textContent = err.message;
+      if (token === renderToken) { body.replaceChildren(el(`<p class="viewer-status"></p>`)); body.firstChild.textContent = err.message; }
       return;
     }
     if (token !== renderToken) return;
-    c.total = entry.pdf ? entry.pdf.numPages : Math.max(entry.pages.length, 1);
-    c.page = Math.min(Math.max(c.page || 1, 1), c.total);
-    pageEl.textContent = `${unitName(c.fileName)} ${c.page} of ${c.total}`;
-    prevBtn.disabled = c.page <= 1;
-    nextBtn.disabled = c.page >= c.total;
-    const highlightHere = c.page === c.citedPage;
-
-    const kind = entry.pdf ? await renderPdfPage(entry, c, highlightHere, token) : renderTextPage(entry, c, highlightHere);
-
+    const total = entry.pdf ? entry.pdf.numPages : Math.max(entry.pages.length, 1);
+    current.total = total;
+    current.page = Math.min(Math.max(current.page || 1, 1), total);
+    pageEl.textContent = `${unitName(c.fileName)} ${current.page} of ${total}`;
+    prevBtn.disabled = current.page <= 1;
+    nextBtn.disabled = current.page >= total;
+    const highlightHere = current.page === c.page;
+    body.replaceChildren();
+    const kind = await renderPage(entry, c, current.page, highlightHere, token, body);
     if (token !== renderToken) return;
     if (entry.fallback) showNote('Showing the text of this page (the PDF itself couldn’t be loaded).');
-    if (!highlightHere) return;
-    if (kind === 'closest') showNote('Closest matching passage: the AI didn’t give an exact quote here, so this is the part of the page that best matches its answer.');
-    else if (kind === 'none' && c.approximate) showNote('Approximate reference: the AI pointed to this page, but no matching passage could be found. It may be in an image.');
-    else if (kind === 'none') showNote('Couldn’t pinpoint the passage on this page. It may be in an image or laid out differently.');
+    if (highlightHere && noteFor(kind, c)) showNote(noteFor(kind, c));
+  }
+
+  // Several cited pages at once (e.g. a sentence that drew on pages 7 and 10), stacked one under another.
+  async function renderMany() {
+    const token = ++renderToken;
+    const items = current.items;
+    const files = [...new Set(items.map(c => c.fileName))];
+    titleEl.textContent = files.length === 1 ? files[0] : `${items.length} sources`;
+    titleEl.title = files.join(', ');
+    pageEl.textContent = files.length === 1
+      ? `${unitName(files[0])}s ${items.map(c => c.page).join(', ')}`
+      : items.map(c => `${c.fileName} ${unitName(c.fileName).toLowerCase()} ${c.page}`).join(' · ');
+    noteEl.hidden = true;
+    prevBtn.hidden = nextBtn.hidden = true;
+    const sections = items.map((c, i) => {
+      const sec = el(`<section class="viewer-section${i === current.focus ? ' focus' : ''}"><p class="viewer-section-label"><span class="src-n"></span><span class="label"></span></p><div class="viewer-section-body"><p class="viewer-status">Loading…</p></div></section>`);
+      sec.querySelector('.src-n').textContent = c.n ?? i + 1;
+      sec.querySelector('.label').textContent = `${files.length > 1 ? c.fileName + ' · ' : ''}${unitName(c.fileName)} ${c.page}`;
+      return sec;
+    });
+    body.replaceChildren(...sections);
+    // Render the clicked one first so it appears straight away, then the rest.
+    const order = [current.focus, ...items.keys()].filter((v, i, a) => a.indexOf(v) === i);
+    for (const i of order) {
+      const c = items[i], target = sections[i].querySelector('.viewer-section-body');
+      try {
+        const entry = await loadFile(c.fileId);
+        if (token !== renderToken) return;
+        target.replaceChildren();
+        const kind = await renderPage(entry, c, c.page, true, token, target, false);
+        if (token !== renderToken) return;
+        const note = entry.fallback ? 'Showing this page’s text (the PDF couldn’t be loaded).' : noteFor(kind, c);
+        if (note) target.prepend(Object.assign(el(`<p class="viewer-note small"></p>`), { textContent: note }));
+      } catch (err) {
+        if (token !== renderToken) return;
+        target.replaceChildren(Object.assign(el(`<p class="viewer-status"></p>`), { textContent: err.message }));
+      }
+      if (i === current.focus) (sections[i].querySelector('.hl, mark') || sections[i]).scrollIntoView({ block: 'center' });
+    }
   }
 
   function showNote(text) { noteEl.textContent = noteEl.hidden ? text : `${noteEl.textContent} ${text}`; noteEl.hidden = false; }
 
-  async function renderPdfPage(entry, c, highlightHere, token) {
-    const page = await entry.pdf.getPage(c.page);
-    if (token !== renderToken) return;
+  // Draws one page into `target` and highlights the cited passage. Returns 'exact' | 'closest' | 'none' | null.
+  function renderPage(entry, c, pageNo, highlightHere, token, target, scroll = true) {
+    if (entry.pdf) return renderPdfPage(entry, c, pageNo, highlightHere, token, target, scroll);
+    return renderTextPage(entry, c, pageNo, highlightHere, target, scroll);
+  }
+
+  async function renderPdfPage(entry, c, pageNo, highlightHere, token, target, scroll) {
+    const page = await entry.pdf.getPage(pageNo);
+    if (token !== renderToken) return null;
     const width = Math.max(body.clientWidth - 32, 200);
     const base = page.getViewport({ scale: 1 });
     const scale = width / base.width;
@@ -171,7 +225,7 @@
     canvas.height = Math.floor(viewport.height * ratio);
     canvas.style.width = `${viewport.width}px`;
     canvas.style.height = `${viewport.height}px`;
-    body.replaceChildren(wrap);
+    target.append(wrap);
     await page.render({ canvasContext: canvas.getContext('2d'), viewport, transform: ratio !== 1 ? [ratio, 0, 0, ratio, 0, 0] : null }).promise;
     if (token !== renderToken || !highlightHere) return null;
 
@@ -201,47 +255,48 @@
       layer.append(box);
       first ??= box;
     }
-    first?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    if (scroll) first?.scrollIntoView({ block: 'center', behavior: 'smooth' });
     return first ? kind : 'none';
   }
 
-  function renderTextPage(entry, c, highlightHere) {
-    const text = entry.pages[c.page - 1] ?? '';
+  function renderTextPage(entry, c, pageNo, highlightHere, target, scroll) {
+    const text = entry.pages[pageNo - 1] ?? '';
     const box = el(`<div class="text-page"></div>`);
+    target.append(box);
     if (!text.trim()) {
       box.append(el(`<p class="viewer-status">No text on this ${unitName(c.fileName).toLowerCase()}.</p>`));
-    } else {
-      const { kind, ranges } = highlightHere ? highlightRanges(text, c) : { kind: null, ranges: [] };
-      // Merge overlapping ranges, then wrap each in a <mark>.
-      const sorted = ranges.slice().sort((a, b) => a[0] - b[0]).reduce((acc, r) => {
-        const last = acc[acc.length - 1];
-        if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]); else acc.push([...r]);
-        return acc;
-      }, []);
-      let pos = 0;
-      for (const [a, b] of sorted) {
-        box.append(document.createTextNode(text.slice(pos, a)));
-        const mark = document.createElement('mark');
-        if (kind === 'closest') mark.className = 'closest';
-        mark.textContent = text.slice(a, b);
-        box.append(mark);
-        pos = b;
-      }
-      box.append(document.createTextNode(text.slice(pos)));
-      body.replaceChildren(box);
-      box.querySelector('mark')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      return highlightHere ? (sorted.length ? kind : 'none') : null;
+      return highlightHere ? 'none' : null;
     }
-    body.replaceChildren(box);
-    return highlightHere ? 'none' : null;
+    const { kind, ranges } = highlightHere ? highlightRanges(text, c) : { kind: null, ranges: [] };
+    // Merge overlapping ranges, then wrap each in a <mark>.
+    const sorted = ranges.slice().sort((a, b) => a[0] - b[0]).reduce((acc, r) => {
+      const last = acc[acc.length - 1];
+      if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]); else acc.push([...r]);
+      return acc;
+    }, []);
+    let pos = 0;
+    for (const [a, b] of sorted) {
+      box.append(document.createTextNode(text.slice(pos, a)));
+      const mark = document.createElement('mark');
+      if (kind === 'closest') mark.className = 'closest';
+      mark.textContent = text.slice(a, b);
+      box.append(mark);
+      pos = b;
+    }
+    box.append(document.createTextNode(text.slice(pos)));
+    if (scroll) box.querySelector('mark')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    return highlightHere ? (sorted.length ? kind : 'none') : null;
   }
 
   // ---------- Opening & closing ----------
-  function open(cite) {
-    current = {
-      fileId: cite.fileId, fileName: cite.fileName, page: cite.page || 1, citedPage: cite.page || 1,
-      quote: cite.quote || '', quotes: cite.quotes || [], claim: cite.claim || '', approximate: !!cite.approximate,
-    };
+  const asItem = cite => ({
+    n: cite.n, fileId: cite.fileId, fileName: cite.fileName, page: cite.page || 1,
+    quote: cite.quote || '', quotes: cite.quotes || [], claim: cite.claim || '', approximate: !!cite.approximate,
+  });
+  // open(cite) shows one page; open([cites], focusIndex) shows several cited pages together.
+  function open(cites, focus = 0) {
+    const items = (Array.isArray(cites) ? cites : [cites]).map(asItem);
+    current = { items, focus: Math.max(0, Math.min(focus, items.length - 1)), page: items[0].page };
     panel.hidden = false;
     main.classList.add('with-viewer');
     render();
@@ -260,9 +315,11 @@
     if (!current) return;
     const win = window.open('', '_blank');
     try {
-      const { file } = await loadFile(current.fileId);
+      const item = current.items.length > 1 ? current.items[current.focus] : current.items[0];
+      const pageNo = current.items.length > 1 ? item.page : current.page;
+      const { file } = await loadFile(item.fileId);
       const { data } = await db().storage.from('files').createSignedUrl(file.storage_path, 300);
-      const url = data.signedUrl + (/\.pdf$/i.test(file.name) ? `#page=${current.page}` : '');
+      const url = data.signedUrl + (/\.pdf$/i.test(file.name) ? `#page=${pageNo}` : '');
       if (win) win.location = url; else location.assign(url);
     } catch { win?.close(); toast('Couldn’t open that file.'); }
   });

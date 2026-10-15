@@ -407,7 +407,7 @@
 
   newBtn.addEventListener('click', async () => {
     const where = folderId ? `the ${window.eigenClasses.findFolder(folderId)?.f.name ?? 'folder'} chat` : 'the whole-course chat';
-    const ok = await confirmDelete('Start a new chat?', `This clears ${where}. Other chats and your files stay as they are.`);
+    const ok = await confirmDelete('Clear this chat?', `This deletes the messages in ${where}. Other chats and your files stay as they are.`, 'Clear chat');
     if (!ok) return;
     const { error } = await scopedChat(db().from('chat_messages').delete().eq('class_id', classId));
     if (error) return toast('Couldn’t clear the chat. Please try again.');

@@ -257,10 +257,11 @@
     toastTimer = setTimeout(() => { toastEl.hidden = true; }, action ? 5000 : 2800);
   }
 
-  function confirmDelete(title, text) {
+  function confirmDelete(title, text, okLabel = 'Delete') {
     return new Promise(resolve => {
       $('confirm-title').textContent = title;
       $('confirm-text').textContent = text;
+      $('confirm-ok').textContent = okLabel;
       const done = result => {
         confirmDialog.close();
         $('confirm-ok').onclick = $('confirm-cancel').onclick = confirmDialog.onclose = null;

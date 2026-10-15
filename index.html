@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=22">
+  <link rel="stylesheet" href="styles.css?v=23">
 </head>
 <body>
   <!-- Icon sprite -->
@@ -35,6 +35,7 @@
     <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
     <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></symbol>
     <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 20 3M16 7l3 3M14 9l2 2"/></symbol>
+    <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></symbol>
     <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
     <symbol id="i-square-plus" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M12 8v8M8 12h8"/></symbol>
     <symbol id="i-circle-plus" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></symbol>
@@ -150,6 +151,23 @@
         </header>
         <div id="archive-content"></div>
       </section>
+
+      <aside class="doc-viewer" id="doc-viewer" hidden aria-label="Cited document">
+        <header class="viewer-header">
+          <div class="viewer-heading">
+            <p class="viewer-title" id="viewer-title"></p>
+            <p class="viewer-page" id="viewer-page"></p>
+          </div>
+          <div class="viewer-tools">
+            <button class="icon-btn" id="viewer-prev" type="button" aria-label="Previous page"><svg><use href="#i-chevron-left"/></svg></button>
+            <button class="icon-btn" id="viewer-next" type="button" aria-label="Next page"><svg><use href="#i-chevron"/></svg></button>
+            <button class="icon-btn" id="viewer-open" type="button" aria-label="Open in a new tab" title="Open in a new tab"><svg><use href="#i-external"/></svg></button>
+            <button class="icon-btn" id="viewer-close" type="button" aria-label="Close"><svg><use href="#i-close"/></svg></button>
+          </div>
+        </header>
+        <p class="viewer-note" id="viewer-note" hidden></p>
+        <div class="viewer-body" id="viewer-body"></div>
+      </aside>
 
       <section class="folder-view" data-view="folder" hidden aria-labelledby="folder-title">
         <header class="view-header folder-header">
@@ -303,14 +321,15 @@
   <div class="toast" id="toast" role="status" hidden></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script>
-  <script src="config.js?v=22"></script>
-  <script src="auth.js?v=22"></script>
-  <script src="classes.js?v=22"></script>
-  <script src="extract.js?v=22"></script>
-  <script src="files.js?v=22"></script>
-  <script src="ai-direct.js?v=22"></script>
-  <script src="settings.js?v=22"></script>
-  <script src="chat.js?v=22"></script>
+  <script src="config.js?v=23"></script>
+  <script src="auth.js?v=23"></script>
+  <script src="classes.js?v=23"></script>
+  <script src="extract.js?v=23"></script>
+  <script src="files.js?v=23"></script>
+  <script src="ai-direct.js?v=23"></script>
+  <script src="settings.js?v=23"></script>
+  <script src="viewer.js?v=23"></script>
+  <script src="chat.js?v=23"></script>
   <script>
     const app = document.getElementById('app');
     const toggle = () => app.classList.toggle('collapsed');

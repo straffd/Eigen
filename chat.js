@@ -377,14 +377,19 @@
   log.addEventListener('click', async e => {
     if (e.target.closest('[data-action="signin"]')) return $('signin-open').click();
     if (e.target.closest('[data-action="add-key"]')) return window.eigenSettings.open();
-    const ref = e.target.closest('.cite-ref');
+    // A citation number or a source opens the cited page beside the chat, with the passage highlighted.
+    const ref = e.target.closest('.cite-ref, .source');
     if (ref) {
-      const li = ref.closest('.msg').querySelector(`.sources li[data-n="${ref.dataset.n}"]`);
-      if (li) { li.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); li.classList.remove('flash'); void li.offsetWidth; li.classList.add('flash'); }
+      const msgEl = ref.closest('.msg');
+      const n = Number(ref.dataset.n ?? ref.closest('li')?.dataset.n);
+      const msg = messages.find(m => m.id && m.id === msgEl.dataset.id) ?? messages[[...log.querySelectorAll('.msg')].indexOf(msgEl)];
+      const cite = msg?.citations?.find(c => c.n === n);
+      const li = msgEl.querySelector(`.sources li[data-n="${n}"]`);
+      if (li) { li.classList.remove('flash'); void li.offsetWidth; li.classList.add('flash'); }
+      if (cite) window.eigenViewer.open(cite);
+      else if (ref.dataset.file) openSource(ref.dataset.file, ref.dataset.page);
       return;
     }
-    const src = e.target.closest('.source');
-    if (src) openSource(src.dataset.file, src.dataset.page);
   });
 
   // Opens the cited file in a new tab, at the cited page for PDFs.

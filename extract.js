@@ -241,7 +241,7 @@
   }
 
   window.eigenReader = {
-    readFile, canRead, kindOf, extract, warmUp,
+    readFile, canRead, kindOf, extract, warmUp, pdfjs: loadPdfjs,
     isReading: id => inProgress.has(id), progress: id => progress.get(id), statusOf: id => results.get(id) ?? null,
   };
 })();

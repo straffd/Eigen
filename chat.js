@@ -216,6 +216,7 @@
 
   // ---------- Data ----------
   async function load() {
+    window.eigenReader.warmUp();
     const token = ++loadToken;
     status = 'loading';
     messages = [];
@@ -264,9 +265,15 @@
     render({ scroll: true });
 
     try {
-      // Make sure files still being read are included before asking.
+      // Give files still being read a moment to finish, but don't hold the question up for long.
       const unread = courseFiles.filter(f => f.aiStatus === null && (!folderId || f.folder_id === folderId));
-      if (unread.length) await Promise.all(unread.map(f => window.eigenReader.readFile(f)));
+      if (unread.length) {
+        await Promise.race([
+          Promise.all(unread.map(f => window.eigenReader.readFile(f))),
+          new Promise(r => setTimeout(r, 15_000)),
+        ]);
+        if (courseFiles.some(f => unread.includes(f) && f.aiStatus === null)) toast('Some files are still being read, so this answer may not include them yet.');
+      }
 
       let finished = false;
       const handle = ev => {

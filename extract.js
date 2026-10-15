@@ -53,6 +53,15 @@
   const loadJSZip = () => loadScript(`${CDN}/jszip@3.10.1/dist/jszip.min.js`).then(() => window.JSZip);
   const loadMammoth = () => loadScript(`${CDN}/mammoth@1.13.0/mammoth.browser.min.js`).then(() => window.mammoth);
 
+  // Start downloading the PDF reader in the background, so the first file doesn't wait for it.
+  let warmed = false;
+  function warmUp() {
+    if (warmed) return;
+    warmed = true;
+    const go = () => loadPdfjs().catch(() => { warmed = false; });
+    (window.requestIdleCallback || (f => setTimeout(f, 300)))(go);
+  }
+
   // ---------- Extractors (each returns an array of page strings) ----------
   const clean = s => s.replace(/\u0000/g, '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 
@@ -71,18 +80,25 @@
     return out.map(clean);
   }
 
-  async function readPdf(buf) {
+  async function readPdf(buf, onProgress) {
     const lib = await loadPdfjs();
     const doc = await lib.getDocument({ data: new Uint8Array(buf) }).promise;
-    const pages = [];
-    for (let i = 1; i <= doc.numPages; i++) {
-      const page = await doc.getPage(i);
-      const tc = await page.getTextContent();
-      let text = '';
-      for (const item of tc.items) text += (item.str ?? '') + (item.hasEOL ? '\n' : ' ');
-      pages.push(clean(text));
-      page.cleanup();
+    const pages = new Array(doc.numPages);
+    let done = 0, next = 1;
+    // A few pages at a time keeps the worker busy without holding every page in memory.
+    async function worker() {
+      while (next <= doc.numPages) {
+        const i = next++;
+        const page = await doc.getPage(i);
+        const tc = await page.getTextContent();
+        let text = '';
+        for (const item of tc.items) text += (item.str ?? '') + (item.hasEOL ? '\n' : ' ');
+        pages[i - 1] = clean(text);
+        page.cleanup();
+        onProgress?.(++done / doc.numPages);
+      }
     }
+    await Promise.all(Array.from({ length: Math.min(4, doc.numPages) }, worker));
     await doc.destroy();
     return pages;
   }
@@ -153,12 +169,12 @@
   }
 
   // Returns { pages, status } where status is 'ready' | 'empty' | 'unsupported' | 'failed'.
-  async function extract(blob, name, mime) {
+  async function extract(blob, name, mime, onProgress) {
     const kind = kindOf(name, mime);
     if (kind === 'video' || kind === 'other') return { pages: [], status: 'unsupported' };
     try {
       let pages;
-      if (kind === 'pdf') pages = await readPdf(await blob.arrayBuffer());
+      if (kind === 'pdf') pages = await readPdf(await blob.arrayBuffer(), onProgress);
       else if (kind === 'pptx') pages = await readPptx(await blob.arrayBuffer());
       else if (kind === 'xlsx') pages = await readXlsx(await blob.arrayBuffer());
       else if (kind === 'docx') pages = await readDocx(await blob.arrayBuffer());
@@ -177,9 +193,18 @@
   const inProgress = new Map(); // fileId -> promise
   let queue = Promise.resolve();
 
+  const TIMEOUT_MS = 120_000;
+  const progress = new Map(); // fileId -> 0..1
+  const results = new Map();  // fileId -> last status, for files added to a list after they were read
+  const withTimeout = (promise, ms) => Promise.race([promise, new Promise((_, rej) => setTimeout(() => rej(new Error('Reading timed out')), ms))]);
+
   // file: { id, name, mime_type, storage_path }. blob is optional (downloaded if missing).
   function readFile(file, blob) {
     if (inProgress.has(file.id)) return inProgress.get(file.id);
+    const report = p => {
+      progress.set(file.id, p);
+      document.dispatchEvent(new CustomEvent('eigen:file-progress', { detail: { id: file.id, progress: p } }));
+    };
     const job = queue.then(async () => {
       document.dispatchEvent(new CustomEvent('eigen:file-reading', { detail: { id: file.id } }));
       let result;
@@ -187,12 +212,14 @@
         result = { pages: [], status: 'unsupported' };
       } else {
         try {
-          if (!blob) {
-            const { data, error } = await db().storage.from('files').download(file.storage_path);
-            if (error) throw error;
-            blob = data;
-          }
-          result = await extract(blob, file.name, file.mime_type || blob.type);
+          result = await withTimeout((async () => {
+            if (!blob) {
+              const { data, error } = await db().storage.from('files').download(file.storage_path);
+              if (error) throw error;
+              blob = data;
+            }
+            return extract(blob, file.name, file.mime_type || blob.type, report);
+          })(), TIMEOUT_MS);
         } catch (err) {
           console.error(err);
           result = { pages: [], status: 'failed' };
@@ -201,13 +228,20 @@
       const charCount = result.pages.reduce((s, p) => s + p.length, 0);
       const { error } = await db().from('file_texts').upsert({ file_id: file.id, pages: result.pages, char_count: charCount, status: result.status });
       if (error) { console.error(error); result.status = 'failed'; }
+      // Mark it finished before announcing, so listeners don't still see it as "reading".
+      inProgress.delete(file.id);
+      progress.delete(file.id);
+      results.set(file.id, result.status);
       document.dispatchEvent(new CustomEvent('eigen:file-read', { detail: { id: file.id, status: result.status, chars: charCount } }));
       return result.status;
-    }).finally(() => inProgress.delete(file.id));
+    }).finally(() => { if (inProgress.get(file.id) === job) inProgress.delete(file.id); progress.delete(file.id); });
     inProgress.set(file.id, job);
     queue = job.catch(() => {});
     return job;
   }
 
-  window.eigenReader = { readFile, canRead, kindOf, extract, isReading: id => inProgress.has(id) };
+  window.eigenReader = {
+    readFile, canRead, kindOf, extract, warmUp,
+    isReading: id => inProgress.has(id), progress: id => progress.get(id), statusOf: id => results.get(id) ?? null,
+  };
 })();

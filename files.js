@@ -57,6 +57,7 @@
 
   // ---------- Data ----------
   async function load() {
+    window.eigenReader.warmUp();
     const token = ++loadToken;
     status = 'loading';
     files = [];
@@ -122,14 +123,16 @@
         });
         if (insert.error) throw insert.error;
         rowCreated = true;
+        // Start reading now, from the copy already in the browser, while the upload runs.
+        const row = { id, name: file.name, size: file.size, mime_type: file.type, storage_path: path, createdAt: Date.now(), aiStatus: null };
+        window.eigenReader.readFile(row, file).catch(() => {});
         const up = await bucket().upload(path, file, { contentType: file.type || 'application/octet-stream', upsert: false });
         if (up.error) throw up.error;
         const mark = await db().from('files').update({ uploaded: true }).eq('id', id);
         if (mark.error) throw mark.error;
-        const row = { id, name: file.name, size: file.size, mime_type: file.type, storage_path: path, createdAt: Date.now(), aiStatus: null };
+        row.aiStatus = window.eigenReader.statusOf(id); // it may already have been read during the upload
         if (folderId === targetFolder) files.unshift(row);
         announce();
-        window.eigenReader.readFile(row, file); // the AI reads it right away
       } catch (err) {
         console.error(err);
         usage -= file.size;
@@ -300,7 +303,8 @@
     const kind = window.eigenReader.kindOf(f.name, f.mime_type || '');
     const readable = window.eigenReader.canRead(f.name, f.mime_type || '');
     const reading = readable && (f.aiStatus === null || window.eigenReader.isReading(f.id));
-    const [cls, text, title] = reading ? ['reading', 'Reading…', 'The AI is reading this file']
+    const pct = window.eigenReader.progress(f.id);
+    const [cls, text, title] = reading ? ['reading', pct ? `Reading… ${Math.round(pct * 100)}%` : 'Reading…', 'The AI is reading this file']
       : f.aiStatus === 'ready' ? ['ready', 'AI ready', 'The course AI can answer questions from this file']
       : f.aiStatus === 'empty' ? ['muted', 'No text found', 'No selectable text (scanned PDFs and images aren’t read yet)']
       : f.aiStatus === 'failed' ? ['muted', 'Couldn’t read', 'Something went wrong reading this file']
@@ -319,6 +323,11 @@
     render();
   });
   document.addEventListener('eigen:file-reading', e => { if (findFile(e.detail.id)) render(); });
+  // Update just the label while a file is being read (no full re-render on every page).
+  document.addEventListener('eigen:file-progress', e => {
+    const chip = content.querySelector(`[data-file-id="${e.detail.id}"] .ai-chip.reading`);
+    if (chip) chip.textContent = `Reading… ${Math.round(e.detail.progress * 100)}%`;
+  });
 
   // ---------- Events ----------
   uploadBtn.addEventListener('click', () => fileInput.click());
@@ -347,6 +356,9 @@
       { label: 'Open', icon: 'external', run: () => openFile(id) },
       { label: 'Download', icon: 'download', run: () => downloadFile(id) },
       { label: 'Rename', icon: 'pencil', run: () => renameFile(id) },
+      ...(['failed', 'empty'].includes(findFile(id)?.aiStatus) && window.eigenReader.canRead(findFile(id).name, findFile(id).mime_type || '')
+        ? [{ label: 'Read again', icon: 'restore', run: () => { const f = findFile(id); f.aiStatus = null; render(); window.eigenReader.readFile(f); } }]
+        : []),
       '-',
       { label: 'Delete file', icon: 'trash', danger: true, run: () => deleteFile(id) },
     ]);

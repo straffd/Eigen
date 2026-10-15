@@ -37,7 +37,7 @@ export interface Material {
 
 export interface HistoryMessage { role: "user" | "assistant"; content: string }
 
-export interface Source { fileId: string; fileName: string; folderName: string; page: number | null; quote: string }
+export interface Source { fileId: string; fileName: string; folderName: string; page: number | null; quote: string; quotes?: string[]; claim?: string }
 
 export interface Deps {
   userId: string;
@@ -181,6 +181,13 @@ export function buildRequest(opts: {
 
 export const stripMarkers = (s: string) => s.replace(/\[\[\d+\]\]/g, "");
 
+// The sentence just before a citation: lets the viewer find the passage if the quote can't be located.
+export function lastSentence(text: string): string {
+  const t = stripMarkers(text).replace(/[*_`#>]/g, "").trimEnd();
+  const cut = Math.max(t.lastIndexOf(". "), t.lastIndexOf("! "), t.lastIndexOf("? "), t.lastIndexOf("\n"));
+  return t.slice(cut + 1).replace(/^[\s\-•\d.)]+/, "").trim().slice(-300);
+}
+
 // Maps an API citation to a Source (file + real page number).
 export function toSource(c: Anthropic.Beta.BetaTextCitation, docs: BuiltRequest["documents"]): Source | null {
   if (!("document_index" in c)) return null;
@@ -264,13 +271,21 @@ export async function handleRequest(req: Request, makeDeps: (req: Request) => Pr
             } else if (event.delta.type === "citations_delta") {
               const source = toSource(event.delta.citation, built.documents);
               if (!source) continue;
+              source.claim = lastSentence(answer);
               const key = `${source.fileId}:${source.page}`;
               let n = citeKey.get(key);
               if (!n) {
                 n = citations.length + 1;
                 citeKey.set(key, n);
+                source.quotes = source.quote ? [source.quote] : [];
                 citations.push({ ...source, n });
                 send({ t: "cite", n, source });
+              } else {
+                const c = citations[n - 1];
+                if (source.quote && !c.quotes!.includes(source.quote)) {
+                  c.quotes!.push(source.quote);
+                  send({ t: "cite", n, source: { ...c } });
+                }
               }
               if (!pending.includes(n)) pending.push(n);
             }

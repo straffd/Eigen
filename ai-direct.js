@@ -82,6 +82,13 @@
 
   const stripMarkers = s => s.replace(/\[\[\d+\]\]/g, '');
 
+  // The sentence just before a citation marker: used to find the matching passage when there's no exact quote.
+  function lastSentence(text) {
+    const t = stripMarkers(text).replace(/[*_`#>]/g, '').trimEnd();
+    const cut = Math.max(t.lastIndexOf('. '), t.lastIndexOf('! '), t.lastIndexOf('? '), t.lastIndexOf('\n'));
+    return t.slice(cut + 1).replace(/^[\s\-•\d.)]+/, '').trim().slice(-300);
+  }
+
   function buildRequest({ courseName, folderName, materials, history, question, referenceMode }) {
     const readable = materials.filter(m => m.pages && m.pages.some(p => p.trim()) && !isVideo(m));
     const videos = materials.filter(isVideo);
@@ -243,7 +250,8 @@
     if (referenceMode) {
       lines.push(
         'REFERENCE MODE IS ON. The student needs to know where every piece of information comes from:',
-        '- After each sentence or bullet that uses the materials, add a reference marker in exactly this form: [[src:D:P]] where D is the document number and P is the page/slide/section number, e.g. [[src:2:14]]. Use one marker per source; you may put several in a row.',
+        '- After each sentence or bullet that uses the materials, add a reference marker in exactly this form: [[src:D:P|QUOTE]] where D is the document number, P is the page/slide/section number, and QUOTE is a short passage copied word for word from that page (5 to 25 words) that supports the sentence. Example: [[src:2:14|A stack is a last-in, first-out structure]]. Use one marker per source; you may put several in a row.',
+        '- The QUOTE must be copied exactly from the page text, not paraphrased, and must not contain the characters ] or |.',
         '- Only use document and page numbers that appear in the materials. Never make one up.',
         '- Prefer the uploaded materials over general knowledge whenever both could answer.',
         '- Anything not from the materials must be labelled inline as (general knowledge, not from your files).',
@@ -272,24 +280,37 @@
     };
   }
 
-  // Turns [[src:D:P]] markers into Eigen's numbered citations as text streams in.
+  // Turns [[src:D:P|quote]] markers into Eigen's numbered citations as text streams in.
   function citationParser(documents, onEvent) {
     const citations = [];
     const keyToN = new Map();
     let buf = '';
     let out = '';
     const emit = text => { if (text) { out += text; onEvent({ t: 'text', text }); } };
-    function handle(d, p) {
+    const norm = x => x.toLowerCase().replace(/\s+/g, ' ').trim();
+    function handle(d, p, quote, before) {
       const doc = documents[d - 1];
       if (!doc || !doc.pages.has(p)) return ''; // made-up reference: drop it
+      quote = (quote || '').trim().replace(/^["“']|["”']$/g, '');
+      // Keep the quote only if it really is on that page.
+      const pageText = norm(doc.material.pages[p - 1] || '');
+      const verified = quote.length >= 8 && pageText.includes(norm(quote));
       const key = `${doc.material.fileId}:${p}`;
       let n = keyToN.get(key);
       if (!n) {
         n = citations.length + 1;
         keyToN.set(key, n);
-        const source = { fileId: doc.material.fileId, fileName: doc.material.fileName, folderName: doc.material.folderName, page: p, quote: '', approximate: true };
+        const source = {
+          fileId: doc.material.fileId, fileName: doc.material.fileName, folderName: doc.material.folderName, page: p,
+          quote: verified ? quote : '', quotes: verified ? [quote] : [], claim: lastSentence(out + before), approximate: !verified,
+        };
         citations.push({ ...source, n });
         onEvent({ t: 'cite', n, source });
+      } else if (verified && !citations[n - 1].quotes.includes(quote)) {
+        const c = citations[n - 1];
+        c.quotes.push(quote);
+        if (!c.quote) { c.quote = quote; c.approximate = false; }
+        onEvent({ t: 'cite', n, source: { ...c } });
       }
       return `[[${n}]]`;
     }
@@ -297,21 +318,20 @@
       push(chunk) {
         buf += chunk;
         let m;
-        const re = /\[\[src:(\d+):(\d+)\]\]/g;
+        const re = /\[\[src:(\d+):(\d+)(?:\|([^\]]{0,600}))?\]\]/g;
         let last = 0, text = '';
         while ((m = re.exec(buf))) {
           const before = buf.slice(last, m.index);
-          const marker = handle(Number(m[1]), Number(m[2]));
+          const marker = handle(Number(m[1]), Number(m[2]), m[3], text + before);
           text += marker ? before + marker : before.replace(/[ \t]+$/, ''); // a dropped marker takes its space with it
           last = re.lastIndex;
         }
         buf = buf.slice(last);
         // Hold back a possible half-received marker at the end (it may continue in the next chunk).
-        const partial = /^\[(\[(s(r(c(:(\d+(:(\d+(\])?)?)?)?)?)?)?)?)?$/;
         let cut = -1;
-        for (let i = Math.max(0, buf.length - 24); i < buf.length; i++) {
-          if (buf[i] === '[' && partial.test(buf.slice(i))) { cut = i; break; }
-        }
+        const open = buf.lastIndexOf('[[');
+        if (open >= 0 && buf.length - open < 700 && /^\[\[(s(r(c(:[^\]]*(\][^\]]?)?)?)?)?)?$/.test(buf.slice(open))) cut = open;
+        else if (buf.endsWith('[')) cut = buf.length - 1;
         if (cut >= 0) { text += buf.slice(0, cut); buf = buf.slice(cut); }
         else { text += buf; buf = ''; }
         // Keep trailing spaces until the next chunk, in case a marker that gets dropped follows them.
@@ -469,13 +489,22 @@
           } else if (event.delta.type === 'citations_delta') {
             const source = toSource(event.delta.citation, built.documents);
             if (!source) continue;
+            source.claim = lastSentence(answer);
             const key = `${source.fileId}:${source.page}`;
             let n = citeKey.get(key);
             if (!n) {
               n = citations.length + 1;
               citeKey.set(key, n);
+              source.quotes = source.quote ? [source.quote] : [];
               citations.push({ ...source, n });
               onEvent({ t: 'cite', n, source });
+            } else {
+              // Same page cited again for another passage: highlight that one too.
+              const c = citations[n - 1];
+              if (source.quote && !c.quotes.includes(source.quote)) {
+                c.quotes.push(source.quote);
+                onEvent({ t: 'cite', n, source: { ...c } });
+              }
             }
             if (!pending.includes(n)) pending.push(n);
           }

@@ -1049,3 +1049,5 @@ svg.lg { width: 24px; height: 24px; stroke-width: 1.4; }
   .doc-viewer { position: fixed; inset: 0; z-index: 40; width: 100%; border-left: 0; }
   .main.with-viewer .chat-view { padding-right: 0; }
 }
+.hl.closest { background: rgba(255, 214, 0, .2); box-shadow: 0 0 0 1px rgba(230, 180, 0, .6); outline: 1px dashed rgba(200, 150, 0, .7); outline-offset: 1px; }
+.text-page mark.closest { background: rgba(255, 214, 0, .14); outline: 1px dashed rgba(255, 214, 0, .5); outline-offset: 1px; }

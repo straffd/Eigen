@@ -250,7 +250,10 @@
     render({ scroll: true });
   }
 
-  const normalizeCite = c => ({ n: c.n, fileId: c.fileId, fileName: c.fileName, folderName: c.folderName, page: c.page, quote: c.quote, approximate: !!c.approximate });
+  const normalizeCite = c => ({
+    n: c.n, fileId: c.fileId, fileName: c.fileName, folderName: c.folderName, page: c.page,
+    quote: c.quote, quotes: c.quotes ?? (c.quote ? [c.quote] : []), claim: c.claim || '', approximate: !!c.approximate,
+  });
 
   async function send() {
     const text = input.value.trim();
@@ -278,7 +281,11 @@
       let finished = false;
       const handle = ev => {
         if (ev.t === 'text') reply.content += ev.text;
-        else if (ev.t === 'cite') reply.citations.push(normalizeCite({ n: ev.n, ...ev.source }));
+        else if (ev.t === 'cite') {
+          const c = normalizeCite({ n: ev.n, ...ev.source });
+          const i = reply.citations.findIndex(x => x.n === c.n);
+          if (i >= 0) reply.citations[i] = c; else reply.citations.push(c); // later events add more quotes for the same page
+        }
         else if (ev.t === 'done') { reply.id = ev.id; finished = true; if (ev.trimmed) toast('This course is large, so only the most relevant pages were used.'); }
         else if (ev.t === 'error') throw new Error(ev.message);
         renderSoon();

@@ -907,8 +907,13 @@ svg.lg { width: 24px; height: 24px; stroke-width: 1.4; }
 .cite-ref:hover { background: var(--logo); color: var(--sidebar-bg); }
 
 .sources { margin-top: 14px; padding-top: 12px; border-top: 1px solid #262626; }
-.sources-title { font-size: 12px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--text-faint); }
+.sources-toggle { display: inline-flex; align-items: center; gap: 6px; margin-left: -6px; padding: 3px 8px 3px 4px; border-radius: 6px; font-size: 12px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--text-faint); }
+.sources-toggle:hover { background: rgba(255,255,255,.06); color: var(--text-muted); }
+.sources-toggle .chev { width: 14px; height: 14px; transition: transform .15s; }
+.sources-toggle[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.sources-count { min-width: 17px; padding: 0 5px; border-radius: 5px; background: #2c2c2c; color: var(--text-muted); font-size: 11px; letter-spacing: 0; text-align: center; }
 .sources ol { list-style: none; margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.sources ol[hidden] { display: none; }
 .sources li { padding: 6px 8px; border-radius: 8px; transition: background .4s; }
 .sources li.flash { background: #2a2a2a; }
 .source { display: flex; align-items: center; gap: 8px; max-width: 100%; text-align: left; }

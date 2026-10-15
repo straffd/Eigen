@@ -82,6 +82,8 @@
     return `section ${s.page}`;
   }
 
+  const openSources = new WeakSet();
+
   // One button for several pages: "pp. 7, 10, 12" (or "3 sources" when they span files).
   function groupLabel(cs) {
     if (cs.some(c => c.fileId !== cs[0].fileId || c.page == null)) return `${cs.length} sources`;
@@ -115,7 +117,19 @@
       }
     }
     if (m.citations?.length) {
-      const src = el(`<div class="sources"><p class="sources-title">Sources</p><ol></ol></div>`);
+      // Collapsed by default; stays open across re-renders once the student opens it.
+      const open = openSources.has(m);
+      const src = el(`
+        <div class="sources">
+          <button type="button" class="sources-toggle" aria-expanded="${open}">${icon('chevron', 'chev')}<span>Sources</span><span class="sources-count">${m.citations.length}</span></button>
+          <ol ${open ? '' : 'hidden'}></ol>
+        </div>`);
+      src.firstElementChild.addEventListener('click', e => {
+        const show = !openSources.has(m);
+        if (show) openSources.add(m); else openSources.delete(m);
+        e.currentTarget.setAttribute('aria-expanded', show);
+        src.querySelector('ol').hidden = !show;
+      });
       for (const c of m.citations) {
         const li = el(`
           <li data-n="${c.n}">

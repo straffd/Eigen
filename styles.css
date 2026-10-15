@@ -1055,3 +1055,4 @@ svg.lg { width: 24px; height: 24px; stroke-width: 1.4; }
 .viewer-section-label { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 13px; color: var(--text-muted); }
 .viewer-section.focus .viewer-section-label { color: var(--text); }
 .viewer-note.small { margin: 0 0 10px; font-size: 12px; }
+.cite-ref.cite-group { padding: 0 6px; font-weight: 500; }

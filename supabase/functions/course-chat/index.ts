@@ -179,7 +179,7 @@ export function buildRequest(opts: {
   return { system: lines.filter((l, i, a) => !(l === "" && a[i - 1] === "")).join("\n").trim(), messages, documents, trimmed };
 }
 
-export const stripMarkers = (s: string) => s.replace(/\[\[\d+\]\]/g, "");
+export const stripMarkers = (s: string) => s.replace(/\[\[\d+(?:,\d+)*\]\]/g, "");
 
 // The sentence just before a citation: lets the viewer find the passage if the quote can't be located.
 export function lastSentence(text: string): string {

@@ -42,8 +42,10 @@
       .replace(/`([^`\n]+)`/g, (_, c) => `<code>${c}</code>`)
       .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
       .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
-      .replace(/((?:\[\[\d+\]\])+)/g, m => `<span class="cite-refs">${[...m.matchAll(/\[\[(\d+)\]\]/g)]
-        .map(x => `<button type="button" class="cite-ref" data-n="${x[1]}">${x[1]}</button>`).join('')}</span>`);
+      .replace(/((?:\[\[\d+(?:,\d+)*\]\])+)/g, m => `<span class="cite-refs">${[...m.matchAll(/\[\[(\d+(?:,\d+)*)\]\]/g)]
+        .map(x => x[1].includes(',')
+          ? `<button type="button" class="cite-ref cite-group" data-ns="${x[1]}">${x[1].replace(/,/g, ', ')}</button>`
+          : `<button type="button" class="cite-ref" data-n="${x[1]}">${x[1]}</button>`).join('')}</span>`);
   }
   function markdown(text) {
     // Older answers may contain raw [[src:…]] markers the model wrote in an unexpected format: hide them.
@@ -80,6 +82,14 @@
     return `section ${s.page}`;
   }
 
+  // One button for several pages: "pp. 7, 10, 12" (or "3 sources" when they span files).
+  function groupLabel(cs) {
+    if (cs.some(c => c.fileId !== cs[0].fileId || c.page == null)) return `${cs.length} sources`;
+    const kind = pageLabel(cs[0]).split(' ')[0];
+    const plural = { 'p.': 'pp.', slide: 'slides', section: 'sections' }[kind] || kind;
+    return `${plural} ${cs.map(c => c.page).join(', ')}`;
+  }
+
   function renderMessage(m) {
     if (m.role === 'user') {
       const node = el(`<div class="msg user"><div class="bubble"></div></div>`);
@@ -99,6 +109,10 @@
       body.innerHTML = `<span class="typing" aria-label="Thinking"><i></i><i></i><i></i></span>`;
     } else {
       body.innerHTML = markdown(m.content);
+      for (const b of body.querySelectorAll('.cite-group')) {
+        const cs = b.dataset.ns.split(',').map(n => m.citations?.find(c => c.n === Number(n))).filter(Boolean);
+        if (cs.length) b.textContent = groupLabel(cs);
+      }
     }
     if (m.citations?.length) {
       const src = el(`<div class="sources"><p class="sources-title">Sources</p><ol></ol></div>`);
@@ -390,17 +404,25 @@
     const ref = e.target.closest('.cite-ref, .source');
     if (ref) {
       const msgEl = ref.closest('.msg');
-      const n = Number(ref.dataset.n ?? ref.closest('li')?.dataset.n);
       const msg = messages.find(m => m.id && m.id === msgEl.dataset.id) ?? messages[[...log.querySelectorAll('.msg')].indexOf(msgEl)];
-      const cite = msg?.citations?.find(c => c.n === n);
-      const li = msgEl.querySelector(`.sources li[data-n="${n}"]`);
-      if (li) { li.classList.remove('flash'); void li.offsetWidth; li.classList.add('flash'); }
-      // Numbers written together (e.g. "1 2") point to the pages a sentence came from: show them all.
-      const group = ref.classList.contains('cite-ref')
-        ? [...ref.closest('.cite-refs').querySelectorAll('.cite-ref')].map(b => msg?.citations?.find(c => c.n === Number(b.dataset.n))).filter(Boolean)
-        : [];
-      if (group.length > 1) window.eigenViewer.open(group, group.indexOf(cite));
-      else if (cite) window.eigenViewer.open(cite);
+      const find = n => msg?.citations?.find(c => c.n === n);
+      const flash = n => {
+        const li = msgEl.querySelector(`.sources li[data-n="${n}"]`);
+        if (li) { li.classList.remove('flash'); void li.offsetWidth; li.classList.add('flash'); }
+      };
+      // A page-group button opens every page behind the explanation, side by side.
+      if (ref.dataset.ns) {
+        const ns = ref.dataset.ns.split(',').map(Number);
+        ns.forEach(flash);
+        const group = ns.map(find).filter(Boolean);
+        if (group.length > 1) window.eigenViewer.open(group, 0);
+        else if (group.length) window.eigenViewer.open(group[0]);
+        return;
+      }
+      const n = Number(ref.dataset.n ?? ref.closest('li')?.dataset.n);
+      const cite = find(n);
+      flash(n);
+      if (cite) window.eigenViewer.open(cite);
       else if (ref.dataset.file) openSource(ref.dataset.file, ref.dataset.page);
       return;
     }

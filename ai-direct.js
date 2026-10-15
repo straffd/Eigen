@@ -80,7 +80,7 @@
     return keep;
   }
 
-  const stripMarkers = s => s.replace(/\[\[\d+\]\]/g, '');
+  const stripMarkers = s => s.replace(/\[\[\d+(?:,\d+)*\]\]/g, '');
 
   // The sentence just before a citation marker: used to find the matching passage when there's no exact quote.
   function lastSentence(text) {
@@ -250,9 +250,9 @@
     if (referenceMode) {
       lines.push(
         'REFERENCE MODE IS ON. The student needs to know where every piece of information comes from:',
-        '- After each sentence or bullet that uses the materials, add a reference marker in exactly this form: [[src:D:P|QUOTE]] where D is the document number, P is the page/slide/section number, and QUOTE is a short passage copied word for word from that page (5 to 25 words) that supports the sentence. Example: [[src:2:14|A stack is a last-in, first-out structure]]. Use one marker per source; you may put several in a row.',
-        '- The QUOTE must be copied exactly from the page text, not paraphrased or shortened with "...", and must not contain the characters ] or |.',
-        '- Each marker names exactly one page. If a sentence uses several pages, write one marker per page, e.g. [[src:1:7|...]][[src:1:10|...]].',
+        '- Cite with reference markers in exactly this form: [[src:D:P|PASSAGE]] where D is the document number and P is the page/slide/section number. PASSAGE is a short passage (5 to 25 words) copied word for word from that page; it is never shown to the student, it only lets the app highlight the spot. It must not contain the characters ] or |.',
+        '- Quoting: when you quote the materials word for word, print the quotation in your answer inside double quotation marks and put its marker straight after the closing quotation mark, e.g. The lecture calls it "a greedy choice at every step" [[src:2:14|a greedy choice at every step]]. Each quotation gets its own marker.',
+        '- Explaining without quoting: put ONE marker after the sentence or bullet listing every page it draws on, with one passage per page separated by " ... " in the same order, e.g. [[src:1:7, 1:10, 1:12|passage from page 7 ... passage from page 10 ... passage from page 12]].',
         '- Only use document and page numbers that appear in the materials. Never make one up.',
         '- Prefer the uploaded materials over general knowledge whenever both could answer.',
         '- Anything not from the materials must be labelled inline as (general knowledge, not from your files).',
@@ -311,12 +311,13 @@
     const emit = text => { if (text) { out += text; onEvent({ t: 'text', text }); } };
     const norm = x => x.toLowerCase().replace(/\s+/g, ' ').trim();
 
-    function cite(d, p, fragments, claim) {
+    function cite(d, p, fragments, claim, shown) {
       const doc = documents[d - 1];
       if (!doc || !doc.pages.has(p)) return null; // made-up reference: drop it
       // Keep only quote fragments that really are on that page.
       const pageText = norm(doc.material.pages[p - 1] || '');
       const verified = fragments.filter(f => f.length >= 8 && pageText.includes(norm(f)));
+      const quotedHere = !!shown && verified.includes(shown);
       const key = `${doc.material.fileId}:${p}`;
       let n = keyToN.get(key);
       if (!n) {
@@ -337,19 +338,27 @@
           onEvent({ t: 'cite', n, source: { ...c } });
         }
       }
-      return n;
+      return { n, quotedHere };
     }
 
     function handle(loc, quote, before) {
       const refs = parseRefs(loc || '', documents.length);
+      const context = out + before;
+      // A quotation the answer itself prints right before the marker ("..." or “...”).
+      const shownMatch = /[“"]([^“”"\n]{8,400})[”"][\s.,;:!?]*$/.exec(context);
+      const shown = shownMatch ? shownMatch[1].trim().replace(/[.,;:!?]+$/, '').trim() : '';
       const fragments = (quote || '').split(/\.{3,}|…/).map(f => f.trim().replace(/^["“'‘]+|["”'’]+$/g, '').trim()).filter(Boolean);
-      const claim = lastSentence(out + before);
-      const ns = [];
+      if (shown) fragments.push(shown);
+      const claim = lastSentence(context);
+      // Pages the printed quotation comes from get their own number next to it; the pages behind
+      // an explanation without a quotation share one button that opens them side by side.
+      const quoted = [], loose = [];
       for (const { d, p } of refs) {
-        const n = cite(d, p, fragments, claim);
-        if (n && !ns.includes(n)) ns.push(n);
+        const r = cite(d, p, fragments, claim, shown);
+        if (!r || quoted.includes(r.n) || loose.includes(r.n)) continue;
+        (r.quotedHere ? quoted : loose).push(r.n);
       }
-      return ns.map(n => `[[${n}]]`).join('');
+      return quoted.map(n => `[[${n}]]`).join('') + (loose.length ? `[[${loose.join(',')}]]` : '');
     }
 
     return {
@@ -385,7 +394,7 @@
         // Keep trailing spaces until the next chunk, in case a marker that gets dropped follows them.
         const ws = /[ \t]+$/.exec(text);
         if (ws) { text = text.slice(0, ws.index); buf = ws[0] + buf; }
-        emit(text.replace(/\]\]\s+(?=\[\[\d+\]\])/g, ']]'));
+        emit(text.replace(/\]\]\s+(?=\[\[\d)/g, ']]'));
       },
       end() {
         this.push('', true);

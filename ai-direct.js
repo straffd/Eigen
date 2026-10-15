@@ -490,9 +490,11 @@
       });
   }
 
-  async function loadHistory(classId) {
-    const { data, error } = await db().from('chat_messages').select('role, content')
-      .eq('class_id', classId).order('created_at', { ascending: false }).limit(HISTORY_MESSAGES);
+  async function loadHistory(classId, folderId) {
+    // Each folder (and the whole course) has its own conversation.
+    const q = db().from('chat_messages').select('role, content').eq('class_id', classId);
+    const { data, error } = await (folderId ? q.eq('folder_id', folderId) : q.is('folder_id', null))
+      .order('created_at', { ascending: false }).limit(HISTORY_MESSAGES);
     if (error) throw error;
     return data.reverse();
   }
@@ -511,7 +513,7 @@
   // { t: 'text', text } | { t: 'cite', n, source } | { t: 'done', id, trimmed } | { t: 'error', message }
   async function ask({ userId, classId, folderId, question, referenceMode, onEvent }) {
     const course = window.eigenClasses.findClass(classId);
-    const [materials, history] = await Promise.all([loadMaterials(course, folderId), loadHistory(classId)]);
+    const [materials, history] = await Promise.all([loadMaterials(course, folderId), loadHistory(classId, folderId)]);
     const folderName = folderId ? course.folders.find(f => f.id === folderId)?.name ?? null : null;
     if (getProvider() === 'gemini') {
       return askGemini({ course, classId, folderId, folderName, question, referenceMode, materials, history, userId, onEvent });

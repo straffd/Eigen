@@ -43,7 +43,7 @@ export interface Deps {
   userId: string;
   loadCourse(classId: string): Promise<{ id: string; name: string } | null>;
   loadMaterials(classId: string, folderId: string | null): Promise<Material[]>;
-  loadHistory(classId: string, limit: number): Promise<HistoryMessage[]>;
+  loadHistory(classId: string, folderId: string | null, limit: number): Promise<HistoryMessage[]>;
   consumeMessage(limit: number): Promise<number | null>;
   recordTokens(input: number, output: number): Promise<void>;
   saveTurn(turn: {
@@ -228,7 +228,7 @@ export async function handleRequest(req: Request, makeDeps: (req: Request) => Pr
 
     [materials, history] = await Promise.all([
       deps.loadMaterials(classId, folderId),
-      deps.loadHistory(classId, HISTORY_MESSAGES),
+      deps.loadHistory(classId, folderId, HISTORY_MESSAGES),
     ]);
   } catch (err) {
     console.error(err);
@@ -370,9 +370,11 @@ async function supabaseDeps(req: Request): Promise<Deps | null> {
           };
         });
     },
-    async loadHistory(classId, limit) {
-      const rows = check(await db.from("chat_messages").select("role, content")
-        .eq("class_id", classId).order("created_at", { ascending: false }).limit(limit)) ?? [];
+    async loadHistory(classId, folderId, limit) {
+      // Each folder (and the whole course) has its own conversation.
+      const q = db.from("chat_messages").select("role, content").eq("class_id", classId);
+      const rows = check(await (folderId ? q.eq("folder_id", folderId) : q.is("folder_id", null))
+        .order("created_at", { ascending: false }).limit(limit)) ?? [];
       return rows.reverse();
     },
     async consumeMessage(limit) {

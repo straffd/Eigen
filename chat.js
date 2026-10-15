@@ -256,7 +256,7 @@
     try {
       const folderIds = c.folders.filter(f => !f.archivedAt).map(f => f.id);
       const [hist, files] = await Promise.all([
-        db().from('chat_messages').select('id, role, content, citations').eq('class_id', classId).order('created_at', { ascending: true }).limit(200),
+        scopedChat(db().from('chat_messages').select('id, role, content, citations').eq('class_id', classId)).order('created_at', { ascending: true }).limit(200),
         folderIds.length
           ? db().from('files').select('id, name, mime_type, storage_path, folder_id, file_texts(status)').in('folder_id', folderIds).eq('uploaded', true)
           : Promise.resolve({ data: [], error: null }),
@@ -398,14 +398,18 @@
   keyChip.addEventListener('click', () => window.eigenSettings.open());
   document.addEventListener('eigen:key-changed', () => { if (classId) renderKeyChip(); });
 
+  // The whole course and each folder keep separate conversations.
+  const scopedChat = q => folderId ? q.eq('folder_id', folderId) : q.is('folder_id', null);
+
   scopeSel.addEventListener('change', () => {
     location.hash = scopeSel.value ? `#course/${classId}/f/${scopeSel.value}` : `#course/${classId}`;
   });
 
   newBtn.addEventListener('click', async () => {
-    const ok = await confirmDelete('Start a new chat?', 'This clears the conversation for this course. Your files stay as they are.');
+    const where = folderId ? `the ${window.eigenClasses.findFolder(folderId)?.f.name ?? 'folder'} chat` : 'the whole-course chat';
+    const ok = await confirmDelete('Start a new chat?', `This clears ${where}. Other chats and your files stay as they are.`);
     if (!ok) return;
-    const { error } = await db().from('chat_messages').delete().eq('class_id', classId);
+    const { error } = await scopedChat(db().from('chat_messages').delete().eq('class_id', classId));
     if (error) return toast('Couldn’t clear the chat. Please try again.');
     messages = [];
     render();
@@ -468,11 +472,11 @@
   function sync() {
     const m = /^#course\/([^/]+)(?:\/f\/([^/]+))?$/.exec(location.hash);
     if (!m) { classId = null; return; }
-    const changedCourse = m[1] !== classId;
+    const changed = m[1] !== classId || (m[2] || null) !== folderId;
     classId = m[1];
     folderId = m[2] || null;
     const ready = user && db() && course();
-    if (ready && (changedCourse || status === 'idle' || status === 'stale')) load();
+    if (ready && (changed || status === 'idle' || status === 'stale')) load();
     else render();
   }
   window.addEventListener('hashchange', sync);

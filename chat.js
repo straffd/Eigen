@@ -21,7 +21,7 @@
   let user = window.eigen?.currentUser?.() ?? null; // may already be signed in by the time this loads
   let classId = null;
   let folderId = null;
-  let chatId = null;     // set on #chat/<id>; classId/folderId then say where the chat is filed (or null)
+  let chatId = null;     // set on #chat/<id> ('new' = a blank chat not saved yet); classId/folderId then say where it's filed
   let queued = null;     // { chatId, text }: first question typed on Home, sent once the chat opens
   let messages = [];     // [{ id, role, content, citations, error, pending }]
   let status = 'idle';   // 'idle' | 'loading' | 'ready' | 'error'
@@ -32,7 +32,7 @@
   const db = () => window.eigen?.supabase;
   const fnUrl = () => `${window.EIGEN_CONFIG.SUPABASE_URL}/functions/v1/course-chat`;
   const course = () => (classId ? window.eigenClasses.findClass(classId) : null);
-  const chat = () => (chatId ? window.eigenChats.find(chatId) : null);
+  const chat = () => (chatId === 'new' ? { id: 'new', title: 'New chat' } : chatId ? window.eigenChats.find(chatId) : null);
   const scopeName = () => (folderId ? window.eigenClasses.findFolder(folderId)?.f.name : null) ?? course()?.name ?? null;
 
   // ---------- Reference mode (remembered per browser) ----------
@@ -261,9 +261,9 @@
     const inScope = courseFiles.filter(f => !folderId || f.folder_id === folderId);
     const ready = inScope.filter(f => f.aiStatus === 'ready').length;
     const reading = inScope.filter(f => f.aiStatus === null && window.eigenReader.canRead(f.name, f.mime_type || '')).length;
-    const folders = new Set(inScope.map(f => f.folder_id)).size;
+    const folders = new Set(inScope.map(f => f.folder_id).filter(Boolean)).size;
     let text = !inScope.length ? 'No files yet, so answers use general knowledge'
-      : `Using ${ready} file${ready === 1 ? '' : 's'}${folderId ? '' : ` from ${folders} folder${folders === 1 ? '' : 's'}`}`;
+      : `Using ${ready} file${ready === 1 ? '' : 's'}${folderId || !folders ? '' : ` from ${folders} folder${folders === 1 ? '' : 's'}${inScope.some(f => !f.folder_id) ? ' and the course' : ''}`}`;
     if (reading) text += ` · reading ${reading} more…`;
     contextEl.textContent = text;
     contextEl.title = inScope.map(f => `${f.name}${f.aiStatus === 'ready' ? '' : ' (not readable)'}`).join('\n');
@@ -276,6 +276,14 @@
   async function load() {
     window.eigenReader.warmUp();
     const token = ++loadToken;
+    if (chatId === 'new') {
+      status = 'ready';
+      messages = [];
+      courseFiles = [];
+      render({ scroll: true });
+      requestAnimationFrame(() => input.focus()); // once the chat page is showing
+      return;
+    }
     status = 'loading';
     messages = [];
     courseFiles = [];
@@ -283,14 +291,17 @@
     const c = course();
     try {
       const folderIds = c ? c.folders.filter(f => !f.archivedAt).map(f => f.id) : [];
-      const [hist, files] = await Promise.all([
+      const cols = 'id, name, mime_type, storage_path, folder_id, file_texts(status)';
+      const none = Promise.resolve({ data: [], error: null });
+      const [hist, inFolders, onCourse] = await Promise.all([
         scopedChat(db().from('chat_messages').select('id, role, content, citations')).order('created_at', { ascending: true }).limit(200),
-        folderIds.length
-          ? db().from('files').select('id, name, mime_type, storage_path, folder_id, file_texts(status)').in('folder_id', folderIds).eq('uploaded', true)
-          : Promise.resolve({ data: [], error: null }),
+        folderIds.length ? db().from('files').select(cols).in('folder_id', folderIds).eq('uploaded', true) : none,
+        // Files kept on the course itself, outside any folder (none if that isn't set up yet).
+        c ? db().from('files').select(cols).eq('class_id', classId).eq('uploaded', true).then(r => (r.error ? { data: [], error: null } : r)) : none,
       ]);
       if (hist.error) throw hist.error;
-      if (files.error) throw files.error;
+      if (inFolders.error) throw inFolders.error;
+      const files = { data: [...onCourse.data, ...inFolders.data] };
       if (token !== loadToken) return;
       messages = hist.data.map(m => ({ ...m, citations: (m.citations || []).map(normalizeCite) }));
       courseFiles = files.data.map(f => {
@@ -322,6 +333,7 @@
   async function send() {
     const text = input.value.trim();
     if (!text || sending || !user || status !== 'ready') return;
+    if (chatId === 'new') return startChat(text, input);
     sending = true;
     messages = messages.filter(m => !m.transient); // clear the last error message
     input.value = '';
@@ -530,25 +542,25 @@
   // Chats loaded, renamed, or dragged into another course or folder.
   document.addEventListener('eigen:chats', () => { if (chatId) sync(); });
 
-  // Typing on Home starts a new chat and sends the question there.
+  // Typing on Home (or in a blank chat from +) saves a new chat and sends the question there.
   const homeForm = document.querySelector('.home .ask');
   const homeInput = homeForm.querySelector('textarea');
-  async function startChat() {
-    const text = homeInput.value.trim();
+  async function startChat(text, box) {
     if (!text) return;
     if (!user || !db()) return $('signin-open').click();
-    homeInput.disabled = true;
+    box.disabled = true;
     const h = await window.eigenChats.create(text);
-    homeInput.disabled = false;
+    box.disabled = false;
     if (!h) return;
-    homeInput.value = '';
-    homeInput.style.height = 'auto';
+    box.value = '';
+    box.style.height = 'auto';
     queued = { chatId: h.id, text };
-    location.hash = '#chat/' + h.id;
+    if (location.hash === '#chat/new') location.replace('#chat/' + h.id); // don't keep the blank chat in history
+    else location.hash = '#chat/' + h.id;
   }
-  homeForm.addEventListener('submit', e => { e.preventDefault(); startChat(); });
+  homeForm.addEventListener('submit', e => { e.preventDefault(); startChat(homeInput.value.trim(), homeInput); });
   homeInput.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); startChat(); }
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); startChat(homeInput.value.trim(), homeInput); }
   });
   document.addEventListener('eigen:user', e => {
     const next = e.detail || null;

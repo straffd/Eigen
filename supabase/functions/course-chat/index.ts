@@ -133,7 +133,7 @@ export function buildRequest(opts: {
       type: "document",
       source: { type: "content", content },
       title: m.fileName.slice(0, 250),
-      context: `Folder: ${m.folderName}. Each content block is one ${kind}` +
+      context: `${m.folderName ? `Folder: ${m.folderName}` : 'Saved on the course itself, not in a folder'}. Each content block is one ${kind}` +
         (keep ? `; only the ${kind}s most relevant to the question are included (numbers: ${pageNumbers.join(", ")}).` : ` (${pageNumbers.length} in total).`),
       citations: { enabled: referenceMode },
     });
@@ -366,19 +366,22 @@ async function supabaseDeps(req: Request): Promise<Deps | null> {
       let q = db.from("folders").select("id, name, position, created_at").eq("class_id", classId).is("archived_at", null);
       if (folderId) q = q.eq("id", folderId);
       const folders = check(await q) ?? [];
-      if (!folders.length) return [];
+      const cols = "id, name, mime_type, folder_id, created_at, file_texts(pages, status)";
+      // The whole course also includes files kept on the course itself, outside any folder.
+      const [inFolders, onCourse] = await Promise.all([
+        folders.length ? db.from("files").select(cols).in("folder_id", folders.map(f => f.id)).eq("uploaded", true) : { data: [], error: null },
+        folderId ? { data: [], error: null } : db.from("files").select(cols).eq("class_id", classId).eq("uploaded", true),
+      ]);
       folders.sort((a, b) => (a.position ?? 1e9) - (b.position ?? 1e9) || a.created_at.localeCompare(b.created_at));
-      const files = check(await db.from("files")
-        .select("id, name, mime_type, folder_id, created_at, file_texts(pages, status)")
-        .in("folder_id", folders.map(f => f.id)).eq("uploaded", true)) ?? [];
       const order = new Map(folders.map((f, i) => [f.id, i]));
       const name = new Map(folders.map(f => [f.id, f.name]));
-      return files
-        .sort((a, b) => order.get(a.folder_id)! - order.get(b.folder_id)! || a.created_at.localeCompare(b.created_at))
+      const rank = (f: { folder_id: string | null }) => (f.folder_id ? order.get(f.folder_id)! : -1);
+      return [...(check(onCourse) ?? []), ...(check(inFolders) ?? [])]
+        .sort((a, b) => rank(a) - rank(b) || a.created_at.localeCompare(b.created_at))
         .map(f => {
           const t = Array.isArray(f.file_texts) ? f.file_texts[0] : f.file_texts;
           return {
-            fileId: f.id, fileName: f.name, folderName: name.get(f.folder_id) ?? "", mimeType: f.mime_type,
+            fileId: f.id, fileName: f.name, folderName: f.folder_id ? name.get(f.folder_id) ?? "" : "", mimeType: f.mime_type,
             pages: t?.status === "ready" && Array.isArray(t.pages) ? t.pages : null, status: t?.status ?? null,
           };
         });

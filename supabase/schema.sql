@@ -115,7 +115,15 @@ create table if not exists public.files (
   check (storage_path = user_id::text || '/' || id::text)
 );
 
+-- Files kept on a course itself, outside any folder (added later; safe on existing tables).
+-- Every file is in exactly one place: a folder, or a course.
+alter table public.files add column if not exists class_id uuid references public.classes (id) on delete cascade;
+alter table public.files alter column folder_id drop not null;
+alter table public.files drop constraint if exists files_has_home;
+alter table public.files add constraint files_has_home check ((folder_id is null) <> (class_id is null));
+
 create index if not exists files_folder_id_idx on public.files (folder_id);
+create index if not exists files_class_id_idx on public.files (class_id);
 create index if not exists files_user_id_idx on public.files (user_id);
 
 alter table public.files enable row level security;
@@ -126,16 +134,21 @@ drop policy if exists "files: owner can update" on public.files;
 drop policy if exists "files: owner can delete" on public.files;
 
 create policy "files: owner can read"   on public.files for select to authenticated using (user_id = auth.uid());
+-- A file can only be put in a folder or course the same user owns.
 create policy "files: owner can insert" on public.files for insert to authenticated
-  with check (user_id = auth.uid() and exists (select 1 from public.folders f where f.id = folder_id and f.user_id = auth.uid()));
+  with check (user_id = auth.uid()
+    and (folder_id is null or exists (select 1 from public.folders f where f.id = folder_id and f.user_id = auth.uid()))
+    and (class_id is null or exists (select 1 from public.classes c where c.id = class_id and c.user_id = auth.uid())));
 create policy "files: owner can update" on public.files for update to authenticated
   using (user_id = auth.uid())
-  with check (user_id = auth.uid() and exists (select 1 from public.folders f where f.id = folder_id and f.user_id = auth.uid()));
+  with check (user_id = auth.uid()
+    and (folder_id is null or exists (select 1 from public.folders f where f.id = folder_id and f.user_id = auth.uid()))
+    and (class_id is null or exists (select 1 from public.classes c where c.id = class_id and c.user_id = auth.uid())));
 create policy "files: owner can delete" on public.files for delete to authenticated using (user_id = auth.uid());
 
 grant select, insert, update, delete on public.files to authenticated;
 
--- Size, path and owner are fixed once a file is created; only name, folder and uploaded can change.
+-- Size, path and owner are fixed once a file is created; only name, folder/course and uploaded can change.
 create or replace function public.files_lock_columns()
 returns trigger
 language plpgsql

@@ -148,6 +148,12 @@
   }
 
   // ---------- Events ----------
+  // + opens a blank chat; it's saved (and named) when the first question is sent.
+  $('new-chat').addEventListener('click', () => {
+    if (location.hash === '#chat/new') document.getElementById('chat-input').focus();
+    else location.hash = '#chat/new';
+  });
+
   // Right-click a chat anywhere in the sidebar (under Chats or inside a course).
   document.querySelector('.sidebar').addEventListener('contextmenu', e => {
     const item = e.target.closest('[data-chat-id]');

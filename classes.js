@@ -79,15 +79,20 @@
       pending.forEach(x => { x.unsaved = false; });
     }
 
-    // Remove stored file bytes before their rows disappear with a folder or class.
-    async function removeFiles(folderIds) {
-      if (!folderIds.length) return;
-      const { data, error } = await db.from('files').select('storage_path').in('folder_id', folderIds);
-      if (error) {
-        if (error.code === 'PGRST205' || error.code === '42P01') return; // files not set up yet
-        throw error;
-      }
-      if (data.length) check(await db.storage.from('files').remove(data.map(r => r.storage_path)));
+    // Remove stored file bytes before their rows disappear with a folder or class (including files
+    // kept on the class itself).
+    async function removeFiles(folderIds, classId = null) {
+      const none = { data: [], error: null };
+      const results = await Promise.all([
+        folderIds.length ? db.from('files').select('storage_path').in('folder_id', folderIds) : none,
+        classId ? db.from('files').select('storage_path').eq('class_id', classId) : none,
+      ]);
+      // A missing table or column just means files (or course files) aren't set up yet.
+      const notSetUp = e => ['PGRST205', '42P01', '42703', 'PGRST204'].includes(e.code);
+      const failed = results.find(r => r.error && !notSetUp(r.error))?.error;
+      if (failed) throw failed;
+      const paths = results.flatMap(r => (r.data ?? []).map(f => f.storage_path));
+      if (paths.length) check(await db.storage.from('files').remove(paths));
     }
     return {
       kind: 'supabase',
@@ -108,7 +113,7 @@
       async addClass(c) { check(await db.from('classes').insert({ id: c.id, name: c.name, archived_at: iso(c.archivedAt) })); },
       async renameClass(c) { check(await db.from('classes').update({ name: c.name }).eq('id', c.id)); },
       async deleteClass(c) {
-        await removeFiles(c.folders.map(f => f.id));
+        await removeFiles(c.folders.map(f => f.id), c.id);
         check(await db.from('classes').delete().eq('id', c.id));
       },
       async addFolder(c, f) {
@@ -350,12 +355,13 @@
     const folders = li.querySelector('.folder-list');
     const shown = c.folders.filter(isActive);
     const chats = chatsUnder(c.id, null);
+    const files = window.eigenFiles ? window.eigenFiles.courseRows(c.id) : [];
     if (shown.length) {
       folders.append(...shown.map(f => renderFolder(c, f)));
-    } else if (!chats.length) {
+    } else if (!chats.length && !files.length) {
       folders.append(el(`<li class="folder-empty">${c.folders.length ? 'All folders archived' : 'No folders yet'}</li>`));
     }
-    folders.append(...chats);
+    folders.append(...files, ...chats);
     return li;
   }
 
@@ -434,7 +440,8 @@
     if (!c) return;
     const n = c.folders.length;
     const ok = await confirmDelete(`Delete ${c.name}?`,
-      n ? `This also deletes its ${n} folder${n === 1 ? '' : 's'} and any files inside. This can’t be undone.` : 'This can’t be undone.');
+      n || window.eigenFiles?.courseFiles(classId).length
+        ? `This also deletes its ${n ? `${n} folder${n === 1 ? '' : 's'} and ` : ''}files. This can’t be undone.` : 'This can’t be undone.');
     if (!ok) return;
     classes = classes.filter(x => x.id !== classId);
     expanded.delete(classId);
@@ -610,7 +617,7 @@
   }
 
   // Chats and desktop files drop *into* a folder, or into a course (chats: the whole course;
-  // files: its "Uploads" folder, made if needed).
+  // files: kept on the course itself).
   const draggingChat = e => ([...(e.dataTransfer?.types || [])].includes('application/x-eigen-chat') && window.eigenChats?.draggingId()) || null;
   const draggingFiles = e => [...(e.dataTransfer?.types || [])].includes('Files');
   function intoTarget(e) {
@@ -630,27 +637,27 @@
     if (classId && !expanded.has(classId)) hoverTimer = setTimeout(() => { expanded.add(classId); render(); }, 700);
   }
 
-  async function uploadsFolder(c) {
-    const existing = c.folders.find(f => isActive(f) && f.name.toLowerCase() === 'uploads');
-    if (existing) return existing;
-    const last = c.folders[c.folders.length - 1];
-    const f = { id: uid(), name: 'Uploads', createdAt: Date.now(), archivedAt: null, position: (last?.position ?? 0) + 1 };
-    c.folders.push(f);
-    expanded.add(c.id);
-    await commit('addFolder', c, f);
-    return findClass(c.id)?.folders.find(x => x.id === f.id) ?? null;
-  }
-
-  async function dropFiles(files, classId, folderId) {
+  // Files dropped on a folder go in it; dropped on a course they're kept on the course itself.
+  function dropFiles(files, classId, folderId) {
     if (!files.length) return;
     if (store.kind !== 'supabase' || !window.eigenFiles?.canUpload()) return toast('Sign in to upload files.');
-    const c = findClass(classId);
-    if (!c) return;
-    const folder = folderId ? c.folders.find(f => f.id === folderId) : await uploadsFolder(c);
-    if (!folder) return;
-    expanded.add(c.id);
+    if (!findClass(classId)) return;
+    expanded.add(classId);
     render();
-    window.eigenFiles.upload(files, folder.id);
+    window.eigenFiles.upload(files, folderId ? { folderId } : { classId });
+  }
+
+  // "Add files…" in a course's menu.
+  const coursePicker = el(`<input type="file" multiple hidden>`);
+  document.body.append(coursePicker);
+  let pickFor = null;
+  coursePicker.addEventListener('change', () => {
+    if (pickFor) dropFiles([...coursePicker.files], pickFor, null);
+    coursePicker.value = '';
+  });
+  function pickCourseFiles(classId) {
+    pickFor = classId;
+    coursePicker.click();
   }
 
   list.addEventListener('dragstart', e => {
@@ -768,6 +775,7 @@
       openMenu(x, y, [
         { label: 'Open AI chat', icon: 'sparkle', run: () => { location.hash = '#course/' + classId; } },
         { label: 'New folder', icon: 'folder-plus', run: () => addFolder(classId) },
+        ...(store.kind === 'supabase' ? [{ label: 'Add files…', icon: 'upload', run: () => pickCourseFiles(classId) }] : []),
         { label: 'Rename', icon: 'pencil', run: () => renameClass(classId) },
         { label: 'Archive course', icon: 'archive', run: () => archiveClass(classId) },
         '-',
@@ -803,6 +811,7 @@
 
   document.addEventListener('eigen:files-changed', () => { if (status === 'ready') refreshSizes(); });
   document.addEventListener('eigen:chats', render);
+  document.addEventListener('eigen:course-files', render);
 
   // Shared with files.js.
   window.eigenUI = { el, icon, toast, confirmDelete, openMenu, closeMenu, inlineInput };

@@ -345,6 +345,7 @@
             <span class="chev-btn" role="button" tabindex="0" aria-label="Show folders" aria-expanded="${open}">${icon('chevron', 'chev')}</span><span class="class-name"></span>
           </a>
           <div class="class-actions">
+            <a class="icon-btn" href="#library/${c.id}" data-action="library" aria-label="Course library" title="Everything in this course">${icon('library', 'sm')}</a>
             <button class="icon-btn" type="button" data-action="add-folder" aria-label="Add folder">${icon('circle-plus', 'sm')}</button>
             <button class="icon-btn" type="button" aria-label="Course settings">${icon('settings', 'sm')}</button>
           </div>
@@ -774,6 +775,7 @@
     } else {
       openMenu(x, y, [
         { label: 'Open AI chat', icon: 'sparkle', run: () => { location.hash = '#course/' + classId; } },
+        { label: 'Course library', icon: 'library', run: () => { location.hash = '#library/' + classId; } },
         { label: 'New folder', icon: 'folder-plus', run: () => addFolder(classId) },
         ...(store.kind === 'supabase' ? [{ label: 'Add files…', icon: 'upload', run: () => pickCourseFiles(classId) }] : []),
         { label: 'Rename', icon: 'pencil', run: () => renameClass(classId) },

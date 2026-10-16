@@ -474,6 +474,9 @@
       const msgEl = ref.closest('.msg');
       const msg = messages.find(m => m.id && m.id === msgEl.dataset.id) ?? messages[[...log.querySelectorAll('.msg')].indexOf(msgEl)];
       const find = n => msg?.citations?.find(c => c.n === n);
+      // Notes written in Eigen open in the note editor rather than the page viewer.
+      const isNote = c => c?.fileId?.startsWith('note:');
+      const openNote = c => { location.hash = '#note/' + c.fileId.slice(5); };
       const flash = n => {
         const li = msgEl.querySelector(`.sources li[data-n="${n}"]`);
         if (li) { li.classList.remove('flash'); void li.offsetWidth; li.classList.add('flash'); }
@@ -482,15 +485,18 @@
       if (ref.dataset.ns) {
         const ns = ref.dataset.ns.split(',').map(Number);
         ns.forEach(flash);
-        const group = ns.map(find).filter(Boolean);
+        const all = ns.map(find).filter(Boolean);
+        const group = all.filter(c => !isNote(c));
         if (group.length > 1) window.eigenViewer.open(group, 0);
         else if (group.length) window.eigenViewer.open(group[0]);
+        else if (all.length) openNote(all[0]);
         return;
       }
       const n = Number(ref.dataset.n ?? ref.closest('li')?.dataset.n);
       const cite = find(n);
       flash(n);
-      if (cite) window.eigenViewer.open(cite);
+      if (isNote(cite)) openNote(cite);
+      else if (cite) window.eigenViewer.open(cite);
       else if (ref.dataset.file) openSource(ref.dataset.file, ref.dataset.page);
       return;
     }

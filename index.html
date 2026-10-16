@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=32">
+  <link rel="stylesheet" href="styles.css?v=33">
 </head>
 <body>
   <!-- Icon sprite -->
@@ -25,6 +25,7 @@
     <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="4"/><path d="M2 21v-1a6 6 0 0 1 6-6h2a6 6 0 0 1 6 6v1M16 4.1a4 4 0 0 1 0 7.8M22 21v-1a6 6 0 0 0-4-5.7"/></symbol>
     <symbol id="i-collab" viewBox="0 0 24 24"><circle cx="8" cy="9" r="5"/><circle cx="16" cy="15" r="5"/></symbol>
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+    <symbol id="i-library" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></symbol>
     <symbol id="i-message" viewBox="0 0 24 24"><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H10l-4 3.5V17H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/></symbol>
     <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></symbol>
@@ -196,9 +197,43 @@
           <p class="usage-text" id="usage-text"></p>
         </div>
         <div id="folder-content"></div>
-        <div class="drop-overlay" id="drop-overlay" hidden>
-          <div><svg><use href="#i-upload"/></svg><p>Drop to upload</p></div>
+      </section>
+
+      <section class="note-view" data-view="note" hidden aria-label="Note">
+        <header class="note-header">
+          <p class="breadcrumb" id="note-crumb"></p>
+          <div class="note-tools">
+            <span class="note-status" id="note-status"></span>
+            <button class="icon-btn danger" id="note-delete" type="button" aria-label="Delete note" title="Delete note" hidden><svg><use href="#i-trash"/></svg></button>
+          </div>
+        </header>
+        <input class="note-title" id="note-title" maxlength="200" placeholder="Untitled note" aria-label="Note title" spellcheck="false">
+        <textarea class="note-body" id="note-body" placeholder="Start writing…" aria-label="Note"></textarea>
+      </section>
+
+      <section class="library-view" data-view="library" hidden aria-labelledby="library-title">
+        <header class="view-header folder-header">
+          <div class="folder-heading">
+            <p class="breadcrumb">Course library</p>
+            <h1 class="view-title" id="library-title"></h1>
+          </div>
+          <div class="folder-actions">
+            <button class="btn-secondary btn-sm" id="library-new-note" type="button"><svg><use href="#i-pencil"/></svg>New note</button>
+          </div>
+        </header>
+        <div class="library-filters">
+          <div class="library-types" id="library-types" role="group" aria-label="Show"></div>
+          <div class="library-row">
+            <label class="library-search"><svg><use href="#i-search"/></svg><input id="library-search" type="search" placeholder="Search this course" aria-label="Search this course"></label>
+            <select id="library-folder" aria-label="Folder"></select>
+            <select id="library-format" aria-label="Format"></select>
+            <select id="library-sort" aria-label="Sort">
+              <option value="recent">Newest first</option>
+              <option value="name">Name</option>
+            </select>
+          </div>
         </div>
+        <div id="library-content"></div>
       </section>
 
       <section class="chat-view" data-view="chat" hidden aria-labelledby="chat-title">
@@ -331,16 +366,18 @@
   <div class="toast" id="toast" role="status" hidden></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script>
-  <script src="config.js?v=32"></script>
-  <script src="auth.js?v=32"></script>
-  <script src="classes.js?v=32"></script>
-  <script src="extract.js?v=32"></script>
-  <script src="files.js?v=32"></script>
-  <script src="chats.js?v=32"></script>
-  <script src="ai-direct.js?v=32"></script>
-  <script src="settings.js?v=32"></script>
-  <script src="viewer.js?v=32"></script>
-  <script src="chat.js?v=32"></script>
+  <script src="config.js?v=33"></script>
+  <script src="auth.js?v=33"></script>
+  <script src="classes.js?v=33"></script>
+  <script src="extract.js?v=33"></script>
+  <script src="notes.js?v=33"></script>
+  <script src="files.js?v=33"></script>
+  <script src="library.js?v=33"></script>
+  <script src="chats.js?v=33"></script>
+  <script src="ai-direct.js?v=33"></script>
+  <script src="settings.js?v=33"></script>
+  <script src="viewer.js?v=33"></script>
+  <script src="chat.js?v=33"></script>
   <script>
     const app = document.getElementById('app');
     const toggle = () => app.classList.toggle('collapsed');
@@ -352,6 +389,7 @@
     function showView() {
       const hash = location.hash;
       const view = hash === '#archive' ? 'archive' : hash.startsWith('#folder/') ? 'folder'
+        : hash.startsWith('#note/') ? 'note' : hash.startsWith('#library/') ? 'library'
         : hash.startsWith('#course/') || hash.startsWith('#chat/') ? 'chat' : 'home';
       document.querySelectorAll('[data-view]').forEach(el => { el.hidden = el.dataset.view !== view; });
       document.querySelectorAll('[data-nav]').forEach(el => el.classList.toggle('active', el.dataset.nav === view));

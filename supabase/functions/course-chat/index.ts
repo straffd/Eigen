@@ -33,6 +33,21 @@ export interface Material {
   mimeType: string | null;
   pages: string[] | null;     // null = no text (video, image, unreadable or not read yet)
   status: string | null;      // file_texts.status, null if not read yet
+  kind?: "context" | "notes"; // notes = the student's own notes and documents
+}
+
+// Notes written in Eigen become documents too, split into sections at paragraph breaks.
+export function noteSections(body: string, size = 2500): string[] {
+  const parts = body.split(/\n\s*\n/);
+  const out: string[] = [];
+  let cur = "";
+  for (const p of parts) {
+    if (cur && cur.length + p.length + 2 > size) { out.push(cur); cur = ""; }
+    cur = cur ? `${cur}\n\n${p}` : p;
+    while (cur.length > size) { out.push(cur.slice(0, size)); cur = cur.slice(size); }
+  }
+  if (cur.trim()) out.push(cur);
+  return out.length ? out : [""];
 }
 
 export interface HistoryMessage { role: "user" | "assistant"; content: string }
@@ -133,7 +148,8 @@ export function buildRequest(opts: {
       type: "document",
       source: { type: "content", content },
       title: m.fileName.slice(0, 250),
-      context: `${m.folderName ? `Folder: ${m.folderName}` : 'Saved on the course itself, not in a folder'}. Each content block is one ${kind}` +
+      context: `${m.folderName ? `Folder: ${m.folderName}` : 'Saved on the course itself, not in a folder'}.` +
+        (m.kind === "notes" ? " The student's own notes, not official course material." : "") + ` Each content block is one ${kind}` +
         (keep ? `; only the ${kind}s most relevant to the question are included (numbers: ${pageNumbers.join(", ")}).` : ` (${pageNumbers.length} in total).`),
       citations: { enabled: referenceMode },
     });
@@ -366,25 +382,39 @@ async function supabaseDeps(req: Request): Promise<Deps | null> {
       let q = db.from("folders").select("id, name, position, created_at").eq("class_id", classId).is("archived_at", null);
       if (folderId) q = q.eq("id", folderId);
       const folders = check(await q) ?? [];
-      const cols = "id, name, mime_type, folder_id, created_at, file_texts(pages, status)";
+      const cols = "id, name, mime_type, folder_id, kind, created_at, file_texts(pages, status)";
+      const none = { data: [], error: null };
       // The whole course also includes files kept on the course itself, outside any folder.
-      const [inFolders, onCourse] = await Promise.all([
-        folders.length ? db.from("files").select(cols).in("folder_id", folders.map(f => f.id)).eq("uploaded", true) : { data: [], error: null },
-        folderId ? { data: [], error: null } : db.from("files").select(cols).eq("class_id", classId).eq("uploaded", true),
+      let notesQ = db.from("notes").select("id, title, body, folder_id, created_at").eq("class_id", classId);
+      notesQ = folderId ? notesQ.eq("folder_id", folderId) : notesQ;
+      const [inFolders, onCourse, notes] = await Promise.all([
+        folders.length ? db.from("files").select(cols).in("folder_id", folders.map(f => f.id)).eq("uploaded", true) : none,
+        folderId ? none : db.from("files").select(cols).eq("class_id", classId).eq("uploaded", true),
+        notesQ,
       ]);
       folders.sort((a, b) => (a.position ?? 1e9) - (b.position ?? 1e9) || a.created_at.localeCompare(b.created_at));
       const order = new Map(folders.map((f, i) => [f.id, i]));
       const name = new Map(folders.map(f => [f.id, f.name]));
-      const rank = (f: { folder_id: string | null }) => (f.folder_id ? order.get(f.folder_id)! : -1);
-      return [...(check(onCourse) ?? []), ...(check(inFolders) ?? [])]
+      const rank = (f: { folder_id: string | null }) => (f.folder_id ? order.get(f.folder_id) ?? 1e9 : -1);
+      const files = [...(check(onCourse) ?? []), ...(check(inFolders) ?? [])]
         .sort((a, b) => rank(a) - rank(b) || a.created_at.localeCompare(b.created_at))
         .map(f => {
           const t = Array.isArray(f.file_texts) ? f.file_texts[0] : f.file_texts;
           return {
             fileId: f.id, fileName: f.name, folderName: f.folder_id ? name.get(f.folder_id) ?? "" : "", mimeType: f.mime_type,
             pages: t?.status === "ready" && Array.isArray(t.pages) ? t.pages : null, status: t?.status ?? null,
+            kind: f.kind === "notes" ? "notes" as const : "context" as const,
           };
         });
+      // Notes table may not exist yet on older databases: then there are just no notes.
+      const written = (notes.error ? [] : notes.data ?? [])
+        .filter(n => !n.folder_id || order.has(n.folder_id))
+        .filter(n => n.body.trim())
+        .map(n => ({
+          fileId: `note:${n.id}`, fileName: n.title, folderName: n.folder_id ? name.get(n.folder_id) ?? "" : "", mimeType: "text/markdown",
+          pages: noteSections(n.body), status: "ready", kind: "notes" as const,
+        }));
+      return [...files, ...written];
     },
     async loadHistory({ classId, folderId, chatId }, limit) {
       // A chat has its own history; otherwise each folder (and the whole course) has its own conversation.

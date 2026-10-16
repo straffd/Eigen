@@ -3,6 +3,8 @@
 // After upload the file's text is read (extract.js) so the course AI can use it straight away.
 // Files can also be kept on a course itself, outside any folder: those are listed under the course
 // in the sidebar and open when clicked.
+// The folder page is split in two: Context (course material: slides, readings) and Notes & docs
+// (the student's own documents, plus notes written in Eigen, see notes.js).
 (() => {
   const MAX_FILE = 50 * 1024 * 1024;   // 50 MB per file
   const QUOTA = 250 * 1024 * 1024;     // 250 MB per user (free plan; also enforced by the database)
@@ -16,13 +18,13 @@
   const uploadBtn = $('upload-btn');
   const fileInput = $('file-input');
   const usageEl = $('usage');
-  const overlay = $('drop-overlay');
   const askBtn = $('ask-folder');
   const { el, icon, toast, confirmDelete, openMenu, inlineInput } = window.eigenUI;
 
   let user = window.eigen?.currentUser?.() ?? null; // may already be signed in by the time this loads
   let folderId = null;
-  let files = [];        // uploaded files in the open folder
+  let files = [];        // uploaded files in the open folder ({ ..., kind: 'context' | 'notes' })
+  let notes = [];        // notes written in Eigen, in the open folder
   let courseFiles = [];  // files kept on a course, outside any folder: [{ ...row, class_id }]
   let uploads = [];      // [{ id, name, size, folderId, classId }] in progress
   let usage = 0;         // bytes used across all folders
@@ -67,14 +69,16 @@
     render();
     try {
       const select = cols => db().from('files').select(cols).eq('folder_id', folderId).eq('uploaded', true);
-      let [list, all] = await Promise.all([
-        select('id, name, size, mime_type, storage_path, created_at, file_texts(status)'),
+      let [list, all, written] = await Promise.all([
+        select('id, name, size, mime_type, storage_path, kind, created_at, file_texts(status)'),
         db().from('files').select('size'),
+        window.eigenNotes.list({ folderId }),
       ]);
       if (list.error) list = await select('id, name, size, mime_type, storage_path, created_at'); // AI tables not set up yet
       if (list.error) throw list.error;
       if (all.error) throw all.error;
       if (token !== loadToken) return;
+      notes = written;
       files = list.data
         .map(f => {
           const t = Array.isArray(f.file_texts) ? f.file_texts[0] : f.file_texts;
@@ -106,7 +110,7 @@
   }
 
   // Uploads into the open folder, or (dropped in the sidebar) into any folder or straight onto a course.
-  async function uploadFiles(list, { folderId: targetFolder = folderId, classId: targetClass = null } = {}) {
+  async function uploadFiles(list, { folderId: targetFolder = folderId, classId: targetClass = null, kind = 'context' } = {}) {
     if (targetClass) targetFolder = null;
     if (!user || (!targetFolder && !targetClass)) return;
     if (targetFolder && targetFolder === folderId ? status !== 'ready' : !await refreshUsage()) return;
@@ -117,7 +121,7 @@
 
       const id = crypto.randomUUID();
       const path = `${user.id}/${id}`;
-      const pending = { id, name: file.name, size: file.size, folderId: targetFolder, classId: targetClass };
+      const pending = { id, name: file.name, size: file.size, folderId: targetFolder, classId: targetClass, kind };
       uploads.push(pending);
       usage += file.size;
       render();
@@ -125,13 +129,13 @@
       let rowCreated = false;
       try {
         const insert = await db().from('files').insert({
-          id, folder_id: targetFolder, class_id: targetClass, name: file.name.slice(0, 200), size: file.size,
+          id, folder_id: targetFolder, class_id: targetClass, kind, name: file.name.slice(0, 200), size: file.size,
           mime_type: file.type || null, storage_path: path,
         });
         if (insert.error) throw insert.error;
         rowCreated = true;
         // Start reading now, from the copy already in the browser, while the upload runs.
-        const row = { id, name: file.name, size: file.size, mime_type: file.type, storage_path: path, createdAt: Date.now(), aiStatus: null };
+        const row = { id, name: file.name, size: file.size, mime_type: file.type, storage_path: path, kind, createdAt: Date.now(), aiStatus: null };
         window.eigenReader.readFile(row, file).catch(() => {});
         const up = await bucket().upload(path, file, { contentType: file.type || 'application/octet-stream', upsert: false });
         if (up.error) throw up.error;
@@ -208,8 +212,9 @@
   const findFile = id => files.find(f => f.id === id) ?? courseFiles.find(f => f.id === id);
   const announce = () => document.dispatchEvent(new CustomEvent('eigen:files-changed'));
 
-  async function openFile(id) {
-    const f = findFile(id);
+  async function openFile(id) { return openRow(findFile(id)); }
+  // Opens any file row (also used by the course library) in a new tab.
+  async function openRow(f) {
     if (!f) return;
     const win = window.open('', '_blank'); // open now so pop-up blockers allow it
     const { data, error } = await bucket().createSignedUrl(f.storage_path, 300);
@@ -245,6 +250,17 @@
     done();
     const { error } = await db().from('files').update({ name }).eq('id', id);
     if (error) { f.name = old; done(); toast(describeError(error)); }
+  }
+
+  // Moves a file between the Context and Notes & docs sides.
+  async function setKind(id, kind) {
+    const f = findFile(id);
+    if (!f || (f.kind ?? 'context') === kind) return;
+    const old = f.kind;
+    f.kind = kind;
+    render();
+    const { error } = await db().from('files').update({ kind }).eq('id', id);
+    if (error) { f.kind = old; render(); toast(describeError(error)); }
   }
 
   async function deleteFile(id) {
@@ -299,7 +315,7 @@
       return;
     }
 
-    uploadBtn.hidden = status !== 'ready';
+    uploadBtn.hidden = true; // each side of the page has its own Upload button
     usageEl.hidden = status !== 'ready';
     askBtn.hidden = c.archivedAt != null;
     askBtn.href = `#course/${c.id}/f/${f.id}`;
@@ -311,53 +327,87 @@
     if (status === 'loading') return content.replaceChildren(el(`<p class="files-status">Loading files…</p>`));
     if (status === 'error') return content.replaceChildren(el(`<p class="files-status">Couldn’t load files.</p>`));
 
-    const here = uploads.filter(u => u.folderId === folderId);
-    if (!files.length && !here.length) {
-      content.replaceChildren(el(`
-        <button class="drop-zone" type="button" data-action="pick">
-          ${icon('upload')}
-          <span class="files-empty-title">Drop files here</span>
-          <span class="files-empty-text">or click to choose. PDFs, slides, notes, up to ${formatSize(MAX_FILE)} each.</span>
-        </button>`));
-      return;
-    }
-
-    const ul = el(`<ul class="file-list"></ul>`);
-    for (const u of here) {
-      const li = el(`
-        <li class="file-item uploading">
-          <span class="file-badge"></span>
-          <div class="file-text"><span class="file-name"></span><span class="file-meta"></span></div>
-          <span class="spinner" aria-label="Uploading"></span>
-        </li>`);
-      li.querySelector('.file-badge').textContent = extension(u.name);
-      li.querySelector('.file-name').textContent = u.name;
-      li.querySelector('.file-meta').textContent = `${formatSize(u.size)} · Uploading…`;
-      ul.append(li);
-    }
-    for (const f of files) {
-      const li = el(`
-        <li class="file-item" data-file-id="${f.id}">
-          <button class="file-open" type="button" data-action="open">
+    const pane = (kind, title, text, extra) => {
+      const sec = el(`
+        <section class="folder-pane" data-kind="${kind}">
+          <header class="pane-head">
+            <div><h2 class="pane-title"></h2><p class="pane-text"></p></div>
+            <div class="pane-actions">${extra}<button class="btn-secondary btn-sm" type="button" data-action="pick" data-kind="${kind}">${icon('upload')}Upload</button></div>
+          </header>
+        </section>`);
+      sec.querySelector('.pane-title').textContent = title;
+      sec.querySelector('.pane-text').textContent = text;
+      const here = uploads.filter(u => u.folderId === folderId && u.kind === kind);
+      const mine = files.filter(f => (f.kind ?? 'context') === kind);
+      const written = kind === 'notes' ? notes : [];
+      if (!here.length && !mine.length && !written.length) {
+        sec.append(el(`
+          <button class="drop-zone" type="button" data-action="pick" data-kind="${kind}">
+            ${icon(kind === 'notes' ? 'pencil' : 'upload')}
+            <span class="files-empty-title">${kind === 'notes' ? 'Your notes go here' : 'Drop course material here'}</span>
+            <span class="files-empty-text">${kind === 'notes'
+              ? 'Write a note, or drop your own documents. The AI reads these too.'
+              : `Lecture slides, readings, past papers. Up to ${formatSize(MAX_FILE)} each.`}</span>
+          </button>`));
+        return sec;
+      }
+      const ul = el(`<ul class="file-list"></ul>`);
+      for (const n of written) {
+        const li = el(`
+          <li class="file-item note-item" data-note-id="${n.id}">
+            <a class="file-open" href="#note/${n.id}">
+              <span class="file-badge note-badge">${icon('pencil')}</span>
+              <span class="file-text"><span class="file-name"></span><span class="file-meta"></span></span>
+            </a>
+          </li>`);
+        li.querySelector('.file-name').textContent = n.title;
+        const words = n.body.trim() ? n.body.trim().split(/\s+/).length : 0;
+        li.querySelector('.file-meta').textContent = `Note · ${words} word${words === 1 ? '' : 's'} · Edited ${formatDate(Date.parse(n.updated_at))}`;
+        ul.append(li);
+      }
+      for (const u of here) {
+        const li = el(`
+          <li class="file-item uploading">
             <span class="file-badge"></span>
-            <span class="file-text"><span class="file-name"></span><span class="file-meta"></span></span>
-          </button>
-          <div class="file-actions">
-            <button class="icon-btn" type="button" data-action="download" aria-label="Download">${icon('download')}</button>
-            <button class="icon-btn danger" type="button" data-action="delete" aria-label="Delete">${icon('trash')}</button>
-          </div>
-        </li>`);
-      const ext = extension(f.name);
-      const badge = li.querySelector('.file-badge');
-      badge.textContent = ext;
-      badge.dataset.ext = ext;
-      li.querySelector('.file-name').textContent = f.name;
-      li.querySelector('.file-meta').textContent = `${formatSize(Number(f.size))} · Added ${formatDate(f.createdAt)}`;
-      const chip = aiChip(f);
-      if (chip) li.querySelector('.file-text').append(chip);
-      ul.append(li);
-    }
-    content.replaceChildren(ul);
+            <div class="file-text"><span class="file-name"></span><span class="file-meta"></span></div>
+            <span class="spinner" aria-label="Uploading"></span>
+          </li>`);
+        li.querySelector('.file-badge').textContent = extension(u.name);
+        li.querySelector('.file-name').textContent = u.name;
+        li.querySelector('.file-meta').textContent = `${formatSize(u.size)} · Uploading…`;
+        ul.append(li);
+      }
+      for (const f of mine) {
+        const li = el(`
+          <li class="file-item" data-file-id="${f.id}" draggable="true">
+            <button class="file-open" type="button" data-action="open">
+              <span class="file-badge"></span>
+              <span class="file-text"><span class="file-name"></span><span class="file-meta"></span></span>
+            </button>
+            <div class="file-actions">
+              <button class="icon-btn" type="button" data-action="download" aria-label="Download">${icon('download')}</button>
+              <button class="icon-btn danger" type="button" data-action="delete" aria-label="Delete">${icon('trash')}</button>
+            </div>
+          </li>`);
+        const ext = extension(f.name);
+        const badge = li.querySelector('.file-badge');
+        badge.textContent = ext;
+        badge.dataset.ext = ext;
+        li.querySelector('.file-name').textContent = f.name;
+        li.querySelector('.file-meta').textContent = `${formatSize(Number(f.size))} · Added ${formatDate(f.createdAt)}`;
+        const chip = aiChip(f);
+        if (chip) li.querySelector('.file-text').append(chip);
+        ul.append(li);
+      }
+      sec.append(ul);
+      return sec;
+    };
+    const split = el(`<div class="folder-split"></div>`);
+    split.append(
+      pane('context', 'Context', 'Course material the AI answers from: slides, readings, past papers.', ''),
+      pane('notes', 'Notes & docs', 'Your own notes and documents.', `<button class="btn-secondary btn-sm" type="button" data-action="new-note">${icon('pencil')}New note</button>`),
+    );
+    content.replaceChildren(split);
   }
 
   // Small label showing whether the course AI has read the file.
@@ -393,16 +443,21 @@
   });
 
   // ---------- Events ----------
-  uploadBtn.addEventListener('click', () => fileInput.click());
+  let pickKind = 'context';
+  uploadBtn.addEventListener('click', () => { pickKind = 'context'; fileInput.click(); });
   fileInput.addEventListener('change', () => {
-    uploadFiles([...fileInput.files]);
+    uploadFiles([...fileInput.files], { kind: pickKind });
     fileInput.value = '';
   });
 
   content.addEventListener('click', e => {
     const action = e.target.closest('[data-action]')?.dataset.action;
     if (!action) return;
-    if (action === 'pick') return fileInput.click();
+    if (action === 'pick') { pickKind = e.target.closest('[data-kind]')?.dataset.kind ?? 'context'; return fileInput.click(); }
+    if (action === 'new-note') {
+      const found = window.eigenClasses.findFolder(folderId);
+      return found && window.eigenNotes.create({ classId: found.c.id, folderId });
+    }
     if (action === 'signin') return $('signin-open').click();
     const id = e.target.closest('[data-file-id]')?.dataset.fileId;
     if (action === 'open') openFile(id);
@@ -411,6 +466,16 @@
   });
 
   content.addEventListener('contextmenu', e => {
+    const noteLi = e.target.closest('[data-note-id]');
+    if (noteLi) {
+      e.preventDefault();
+      const id = noteLi.dataset.noteId;
+      return openMenu(e.clientX, e.clientY, [
+        { label: 'Open', icon: 'pencil', run: () => { location.hash = '#note/' + id; } },
+        '-',
+        { label: 'Delete note', icon: 'trash', danger: true, run: () => window.eigenNotes.remove(id) },
+      ]);
+    }
     const li = e.target.closest('[data-file-id]');
     if (!li || e.target.closest('.inline-input')) return;
     e.preventDefault();
@@ -419,6 +484,9 @@
       { label: 'Open', icon: 'external', run: () => openFile(id) },
       { label: 'Download', icon: 'download', run: () => downloadFile(id) },
       { label: 'Rename', icon: 'pencil', run: () => renameFile(id) },
+      (findFile(id)?.kind ?? 'context') === 'context'
+        ? { label: 'Move to Notes & docs', icon: 'pencil', run: () => setKind(id, 'notes') }
+        : { label: 'Move to Context', icon: 'file', run: () => setKind(id, 'context') },
       ...(['failed', 'empty'].includes(findFile(id)?.aiStatus) && window.eigenReader.canRead(findFile(id).name, findFile(id).mime_type || '')
         ? [{ label: 'Read again', icon: 'restore', run: () => { const f = findFile(id); f.aiStatus = null; render(); window.eigenReader.readFile(f); } }]
         : []),
@@ -427,18 +495,46 @@
     ]);
   });
 
-  // Drag and drop anywhere on the folder page.
-  let dragDepth = 0;
-  const canDrop = e => !view.hidden && user && status === 'ready' && [...(e.dataTransfer?.types || [])].includes('Files');
-  view.addEventListener('dragenter', e => { if (!canDrop(e)) return; e.preventDefault(); dragDepth++; overlay.hidden = false; });
-  view.addEventListener('dragover', e => { if (canDrop(e)) e.preventDefault(); });
-  view.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; overlay.hidden = true; } });
-  view.addEventListener('drop', e => {
-    dragDepth = 0;
-    overlay.hidden = true;
+  // Drag and drop: files from the desktop upload to the side they're dropped on (Context if dropped
+  // elsewhere on the page); files already here can be dragged to the other side.
+  const types = e => [...(e.dataTransfer?.types || [])];
+  const canDrop = e => !view.hidden && user && status === 'ready' && (types(e).includes('Files') || types(e).includes('application/x-eigen-file'));
+  const paneAt = e => e.target.closest?.('.folder-pane');
+  const clearPanes = () => content.querySelectorAll('.folder-pane.drop-target').forEach(p => p.classList.remove('drop-target'));
+  content.addEventListener('dragstart', e => {
+    const li = e.target.closest('.file-item[data-file-id]');
+    if (!li) return;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('application/x-eigen-file', li.dataset.fileId);
+    requestAnimationFrame(() => li.classList.add('dragging'));
+  });
+  content.addEventListener('dragend', () => { clearPanes(); content.querySelectorAll('.dragging').forEach(n => n.classList.remove('dragging')); });
+  view.addEventListener('dragover', e => {
     if (!canDrop(e)) return;
     e.preventDefault();
-    uploadFiles([...e.dataTransfer.files]);
+    const target = paneAt(e) ?? (types(e).includes('Files') ? content.querySelector('.folder-pane[data-kind="context"]') : null);
+    clearPanes();
+    target?.classList.add('drop-target');
+  });
+  view.addEventListener('dragleave', e => { if (!view.contains(e.relatedTarget)) clearPanes(); });
+  view.addEventListener('drop', e => {
+    clearPanes();
+    if (!canDrop(e)) return;
+    e.preventDefault();
+    const kind = paneAt(e)?.dataset.kind;
+    const moved = e.dataTransfer.getData('application/x-eigen-file');
+    if (moved) { if (kind) setKind(moved, kind); return; }
+    uploadFiles([...e.dataTransfer.files], { kind: kind ?? 'context' });
+  });
+
+  // A note was written, renamed or deleted: refresh the list if it's in this folder.
+  document.addEventListener('eigen:notes-changed', async e => {
+    if (!folderId || e.detail.folderId !== folderId || status !== 'ready') return;
+    const target = folderId;
+    const written = await window.eigenNotes.list({ folderId: target });
+    if (target !== folderId) return;
+    notes = written;
+    render();
   });
 
   // Clicking a course's file in the sidebar opens it; right-click for more.
@@ -465,6 +561,7 @@
 
   window.eigenFiles = {
     upload: uploadFiles,
+    openRow,
     canUpload: () => !!user && !!db(),
     courseRows,
     courseFiles: classId => courseFiles.filter(f => f.class_id === classId),

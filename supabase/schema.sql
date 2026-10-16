@@ -122,6 +122,12 @@ alter table public.files alter column folder_id drop not null;
 alter table public.files drop constraint if exists files_has_home;
 alter table public.files add constraint files_has_home check ((folder_id is null) <> (class_id is null));
 
+-- Which side of the folder page a file is on: course material the AI reads ("context"), or the
+-- student's own notes and documents ("notes"). Added later; safe on existing tables.
+alter table public.files add column if not exists kind text not null default 'context';
+alter table public.files drop constraint if exists files_kind_check;
+alter table public.files add constraint files_kind_check check (kind in ('context', 'notes'));
+
 create index if not exists files_folder_id_idx on public.files (folder_id);
 create index if not exists files_class_id_idx on public.files (class_id);
 create index if not exists files_user_id_idx on public.files (user_id);
@@ -194,6 +200,45 @@ drop trigger if exists files_enforce_quota on public.files;
 create trigger files_enforce_quota
   before insert on public.files
   for each row execute function public.enforce_storage_quota();
+
+-- ---------- Notes written in Eigen ----------
+-- Kept in a folder, or on the course itself (folder_id null). The course AI reads them too.
+create table if not exists public.notes (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  class_id    uuid not null references public.classes (id) on delete cascade,
+  folder_id   uuid references public.folders (id) on delete cascade,
+  title       text not null default 'Untitled note' check (char_length(title) between 1 and 200),
+  body        text not null default '' check (char_length(body) <= 200000),
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+
+create index if not exists notes_class_idx on public.notes (class_id);
+create index if not exists notes_folder_idx on public.notes (folder_id);
+create index if not exists notes_user_idx on public.notes (user_id);
+
+alter table public.notes enable row level security;
+
+drop policy if exists "notes: owner can read"   on public.notes;
+drop policy if exists "notes: owner can insert" on public.notes;
+drop policy if exists "notes: owner can update" on public.notes;
+drop policy if exists "notes: owner can delete" on public.notes;
+
+-- A note can only be put in a course (and folder of that course) the same user owns.
+create policy "notes: owner can read"   on public.notes for select to authenticated using (user_id = auth.uid());
+create policy "notes: owner can insert" on public.notes for insert to authenticated
+  with check (user_id = auth.uid()
+    and exists (select 1 from public.classes c where c.id = class_id and c.user_id = auth.uid())
+    and (folder_id is null or exists (select 1 from public.folders f where f.id = folder_id and f.class_id = notes.class_id and f.user_id = auth.uid())));
+create policy "notes: owner can update" on public.notes for update to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid()
+    and exists (select 1 from public.classes c where c.id = class_id and c.user_id = auth.uid())
+    and (folder_id is null or exists (select 1 from public.folders f where f.id = folder_id and f.class_id = notes.class_id and f.user_id = auth.uid())));
+create policy "notes: owner can delete" on public.notes for delete to authenticated using (user_id = auth.uid());
+
+grant select, insert, update, delete on public.notes to authenticated;
 
 -- ---------- Storage bucket (private, 50 MB per file) ----------
 insert into storage.buckets (id, name, public, file_size_limit)

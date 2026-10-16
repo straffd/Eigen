@@ -486,7 +486,7 @@ svg.lg { width: 24px; height: 24px; stroke-width: 1.4; }
 .class-list { gap: 0; }
 .class { display: flex; flex-direction: column; }
 .class-name, .folder-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.class-toggle { min-width: 0; padding-right: 64px; }
+.class-toggle { min-width: 0; padding-right: 92px; }
 
 .icon-btn.is-disabled { opacity: .35; }
 .icon-btn.is-disabled:hover { background: none; color: var(--text-muted); }
@@ -676,7 +676,7 @@ svg.lg { width: 24px; height: 24px; stroke-width: 1.4; }
 }
 
 /* ---------- Folder page & files ---------- */
-.folder-view { position: relative; width: 100%; max-width: 860px; padding: 72px 0 64px; }
+.folder-view { position: relative; width: 100%; max-width: 1180px; padding: 72px 0 64px; }
 .folder-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
 .folder-heading { min-width: 0; }
 .folder-heading .view-title { overflow-wrap: anywhere; }
@@ -1093,3 +1093,50 @@ svg.lg { width: 24px; height: 24px; stroke-width: 1.4; }
 .file-row .file-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .file-row.uploading { opacity: .6; cursor: default; }
 .file-row .file-name { font-weight: 400; }
+
+/* ---------- Folder page: Context | Notes & docs ---------- */
+.folder-split { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+.folder-pane { min-width: 0; padding: 14px; border: 1px solid #262626; border-radius: 14px; background: #171717; transition: border-color .15s, background .15s; }
+.folder-pane.drop-target { border-color: var(--text-muted); background: #1d1d1d; }
+.pane-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.pane-title { font-size: 16px; font-weight: 600; }
+.pane-text { margin-top: 2px; font-size: 13px; color: var(--text-faint); }
+.pane-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.pane-actions svg { width: 14px; height: 14px; }
+.folder-pane .drop-zone { padding: 40px 18px; }
+.file-item.dragging { opacity: .4; }
+.note-badge { color: #c9b6f2; }
+.note-badge svg { width: 18px; height: 18px; }
+a.file-open { color: inherit; text-decoration: none; }
+@media (max-width: 900px) { .folder-split { grid-template-columns: 1fr; } }
+
+/* ---------- Note editor ---------- */
+.note-view { width: 100%; max-width: 780px; padding: 64px 0 80px; }
+.note-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; }
+.note-header .breadcrumb { margin: 0; }
+.note-header .breadcrumb a { color: inherit; text-decoration: none; }
+.note-header .breadcrumb a:hover { color: var(--text); }
+.note-tools { display: flex; align-items: center; gap: 8px; }
+.note-status { font-size: 13px; color: var(--text-faint); }
+.note-title { width: 100%; margin-top: 10px; padding: 0; background: none; border: 0; outline: none; color: var(--text); font: 400 40px/1.15 "Instrument Serif", Georgia, serif; }
+.note-title::placeholder, .note-body::placeholder { color: var(--text-faint); }
+.note-body { width: 100%; min-height: 320px; margin-top: 18px; padding: 0; background: none; border: 0; outline: none; resize: none; color: var(--text); font: inherit; font-size: 16px; line-height: 1.7; overflow: hidden; }
+
+/* ---------- Course library ---------- */
+.library-view { width: 100%; max-width: 980px; padding: 72px 0 64px; }
+.library-filters { display: flex; flex-direction: column; gap: 12px; margin: 22px 0 18px; }
+.library-types { display: flex; flex-wrap: wrap; gap: 6px; }
+.filter-chip { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border: 1px solid var(--border); border-radius: 999px; font-size: 14px; color: var(--text-muted); }
+.filter-chip:hover { color: var(--text); border-color: #555; }
+.filter-chip.on { background: var(--logo); border-color: var(--logo); color: var(--sidebar-bg); font-weight: 500; }
+.chip-count { font-size: 12px; opacity: .7; font-variant-numeric: tabular-nums; }
+.library-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.library-row select { height: 36px; padding: 0 30px 0 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--input-bg); color: var(--text); font: inherit; font-size: 14px; }
+.library-search { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 200px; height: 36px; padding: 0 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--input-bg); }
+.library-search svg { width: 16px; height: 16px; color: var(--text-faint); }
+.library-search input { flex: 1; min-width: 0; background: none; border: 0; outline: none; color: var(--text); font: inherit; font-size: 14px; }
+.library-list .file-badge svg { width: 18px; height: 18px; }
+.kind-tag { flex-shrink: 0; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--border); font-size: 12px; color: var(--text-muted); }
+.kind-tag[data-kind="notes"] { color: #c9b6f2; border-color: #3d3550; }
+.kind-tag[data-kind="context"] { color: #9fc3e8; border-color: #2e3e50; }
+.kind-tag[data-kind="course"] { color: #e5b07a; border-color: #4d3c2a; }

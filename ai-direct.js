@@ -115,7 +115,8 @@
         type: 'document',
         source: { type: 'content', content },
         title: m.fileName.slice(0, 250),
-        context: `${m.folderName ? `Folder: ${m.folderName}` : 'Saved on the course itself, not in a folder'}. Each content block is one ${kind}` +
+        context: `${m.folderName ? `Folder: ${m.folderName}` : 'Saved on the course itself, not in a folder'}.` +
+          (m.kind === 'notes' ? ' The student\'s own notes, not official course material.' : '') + ` Each content block is one ${kind}` +
           (keep ? `; only the ${kind}s most relevant to the question are included (numbers: ${pageNumbers.join(', ')}).` : ` (${pageNumbers.length} in total).`),
         citations: { enabled: referenceMode },
       });
@@ -228,7 +229,8 @@
       if (!pages.length) return;
       documents.push({ material: m, unit, pages: new Set(m.pages.map((_, p) => p + 1)) });
       const esc = v => v.replace(/"/g, "'");
-      blocks.push(`<document number="${documents.length}" title="${esc(m.fileName)}" folder="${esc(m.folderName || '(course)')}">\n${pages.join('\n')}\n</document>`);
+      const own = m.kind === 'notes' ? ' type="student\'s own notes"' : '';
+      blocks.push(`<document number="${documents.length}" title="${esc(m.fileName)}" folder="${esc(m.folderName || '(course)')}"${own}>\n${pages.join('\n')}\n</document>`);
     });
 
     const lines = [
@@ -472,27 +474,50 @@
   // ---------- Asking ----------
   const db = () => window.eigen.supabase;
 
+  // Notes written in Eigen become documents too, split into sections at paragraph breaks.
+  function noteSections(body, size = 2500) {
+    const out = [];
+    let cur = '';
+    for (const p of body.split(/\n\s*\n/)) {
+      if (cur && cur.length + p.length + 2 > size) { out.push(cur); cur = ''; }
+      cur = cur ? `${cur}\n\n${p}` : p;
+      while (cur.length > size) { out.push(cur.slice(0, size)); cur = cur.slice(size); }
+    }
+    if (cur.trim()) out.push(cur);
+    return out.length ? out : [''];
+  }
+
   async function loadMaterials(course, folderId) {
     const folders = course.folders.filter(f => !f.archivedAt && (!folderId || f.id === folderId));
-    const cols = 'id, name, mime_type, folder_id, created_at, file_texts(pages, status)';
+    const cols = 'id, name, mime_type, folder_id, kind, created_at, file_texts(pages, status)';
     const none = { data: [], error: null };
+    let notesQ = db().from('notes').select('id, title, body, folder_id, created_at').eq('class_id', course.id);
+    if (folderId) notesQ = notesQ.eq('folder_id', folderId);
     // The whole course also includes files kept on the course itself, outside any folder.
-    const [inFolders, onCourse] = await Promise.all([
+    const [inFolders, onCourse, notes] = await Promise.all([
       folders.length ? db().from('files').select(cols).in('folder_id', folders.map(f => f.id)).eq('uploaded', true) : none,
       folderId ? none : db().from('files').select(cols).eq('class_id', course.id).eq('uploaded', true),
+      notesQ,
     ]);
     if (inFolders.error) throw inFolders.error;
     if (onCourse.error) throw onCourse.error;
     const order = new Map(folders.map((f, i) => [f.id, i]));
     const names = new Map(folders.map(f => [f.id, f.name]));
-    const rank = f => (f.folder_id ? order.get(f.folder_id) : -1);
-    return [...onCourse.data, ...inFolders.data]
+    const rank = f => (f.folder_id ? order.get(f.folder_id) ?? 1e9 : -1);
+    const files = [...onCourse.data, ...inFolders.data]
       .sort((a, b) => rank(a) - rank(b) || a.created_at.localeCompare(b.created_at))
       .map(f => {
         const t = Array.isArray(f.file_texts) ? f.file_texts[0] : f.file_texts;
         return { fileId: f.id, fileName: f.name, folderName: names.get(f.folder_id) || '', mimeType: f.mime_type,
-          pages: t?.status === 'ready' && Array.isArray(t.pages) ? t.pages : null, status: t?.status ?? null };
+          pages: t?.status === 'ready' && Array.isArray(t.pages) ? t.pages : null, status: t?.status ?? null,
+          kind: f.kind === 'notes' ? 'notes' : 'context' };
       });
+    // Notes table may not exist yet on older databases: then there are just no notes.
+    const written = (notes.error ? [] : notes.data)
+      .filter(n => (!n.folder_id || order.has(n.folder_id)) && n.body.trim())
+      .map(n => ({ fileId: `note:${n.id}`, fileName: n.title, folderName: names.get(n.folder_id) || '', mimeType: 'text/markdown',
+        pages: noteSections(n.body), status: 'ready', kind: 'notes' }));
+    return [...files, ...written];
   }
 
   async function loadHistory(classId, folderId, chatId) {

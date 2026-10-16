@@ -1,6 +1,6 @@
 // Eigen course chat: answers questions about a course using the text of the files in its folders.
 //
-// POST { class_id, folder_id?, message, reference_mode } with the user's Supabase JWT.
+// POST { class_id, folder_id?, message, reference_mode } or { chat_id, message, reference_mode } with the user's Supabase JWT.
 // Streams newline-delimited JSON events back:
 //   {"t":"text","text":"..."}                 answer text as it is written
 //   {"t":"cite","n":1,"source":{...}}         a citation; the marker [[n]] is also emitted in the text
@@ -42,12 +42,13 @@ export interface Source { fileId: string; fileName: string; folderName: string; 
 export interface Deps {
   userId: string;
   loadCourse(classId: string): Promise<{ id: string; name: string } | null>;
+  loadChat(chatId: string): Promise<{ id: string; class_id: string | null; folder_id: string | null } | null>;
   loadMaterials(classId: string, folderId: string | null): Promise<Material[]>;
-  loadHistory(classId: string, folderId: string | null, limit: number): Promise<HistoryMessage[]>;
+  loadHistory(scope: { classId: string | null; folderId: string | null; chatId: string | null }, limit: number): Promise<HistoryMessage[]>;
   consumeMessage(limit: number): Promise<number | null>;
   recordTokens(input: number, output: number): Promise<void>;
   saveTurn(turn: {
-    classId: string; folderId: string | null; question: string; answer: string;
+    classId: string | null; folderId: string | null; chatId: string | null; question: string; answer: string;
     citations: (Source & { n: number })[]; referenceMode: boolean;
   }): Promise<string>;
   anthropic: Anthropic;
@@ -101,7 +102,7 @@ export interface BuiltRequest {
 }
 
 export function buildRequest(opts: {
-  courseName: string; folderName: string | null; materials: Material[]; history: HistoryMessage[];
+  courseName: string | null; folderName: string | null; materials: Material[]; history: HistoryMessage[];
   question: string; referenceMode: boolean;
 }): BuiltRequest {
   const { courseName, folderName, materials, history, question, referenceMode } = opts;
@@ -141,7 +142,7 @@ export function buildRequest(opts: {
   if (docBlocks.length) (docBlocks[docBlocks.length - 1] as { cache_control?: unknown }).cache_control = { type: "ephemeral" };
 
   const lines = [
-    `You are Eigen, a study assistant for the university course ${courseName}.`,
+    courseName ? `You are Eigen, a study assistant for the university course ${courseName}.` : "You are Eigen, a study assistant for a university student.",
     folderName ? `The student is asking about the folder "${folderName}" in this course.` : "",
     "",
     "The student's course materials are attached as documents at the start of the conversation. They are your primary source:",
@@ -206,13 +207,14 @@ export async function handleRequest(req: Request, makeDeps: (req: Request) => Pr
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json(405, { error: "Method not allowed" });
 
-  let body: { class_id?: unknown; folder_id?: unknown; message?: unknown; reference_mode?: unknown };
+  let body: { class_id?: unknown; folder_id?: unknown; chat_id?: unknown; message?: unknown; reference_mode?: unknown };
   try { body = await req.json(); } catch { return json(400, { error: "Invalid JSON" }); }
-  const classId = typeof body.class_id === "string" ? body.class_id : "";
-  const folderId = typeof body.folder_id === "string" && body.folder_id ? body.folder_id : null;
+  let classId: string | null = typeof body.class_id === "string" && body.class_id ? body.class_id : null;
+  let folderId = typeof body.folder_id === "string" && body.folder_id ? body.folder_id : null;
+  const chatId = typeof body.chat_id === "string" && body.chat_id ? body.chat_id : null;
   const question = typeof body.message === "string" ? body.message.trim() : "";
   const referenceMode = body.reference_mode === true;
-  if (!classId || !question) return json(400, { error: "class_id and message are required" });
+  if ((!classId && !chatId) || !question) return json(400, { error: "class_id or chat_id, and message, are required" });
   if (question.length > MAX_QUESTION_CHARS) return json(400, { error: `Questions can be up to ${MAX_QUESTION_CHARS} characters.` });
 
   let deps: Deps | null, course: { id: string; name: string } | null, materials: Material[], history: HistoryMessage[];
@@ -220,22 +222,29 @@ export async function handleRequest(req: Request, makeDeps: (req: Request) => Pr
     deps = await makeDeps(req);
     if (!deps) return json(401, { error: "Please sign in again." });
 
-    course = await deps.loadCourse(classId);
-    if (!course) return json(404, { error: "Course not found." });
+    if (chatId) {
+      // A chat answers from the course or folder it has been dragged into, if any.
+      const chat = await deps.loadChat(chatId);
+      if (!chat) return json(404, { error: "Chat not found." });
+      classId = chat.class_id;
+      folderId = chat.class_id ? chat.folder_id : null;
+    }
+    course = classId ? await deps.loadCourse(classId) : null;
+    if (classId && !course) return json(404, { error: "Course not found." });
 
     const used = await deps.consumeMessage(DAILY_MESSAGE_LIMIT);
     if (used === null) return json(429, { error: `You've reached today's limit of ${DAILY_MESSAGE_LIMIT} AI messages. It resets tomorrow.` });
 
     [materials, history] = await Promise.all([
-      deps.loadMaterials(classId, folderId),
-      deps.loadHistory(classId, folderId, HISTORY_MESSAGES),
+      classId ? deps.loadMaterials(classId, folderId) : Promise.resolve([]),
+      deps.loadHistory({ classId, folderId, chatId }, HISTORY_MESSAGES),
     ]);
   } catch (err) {
     console.error(err);
     return json(500, { error: "The AI isn't fully set up yet. Run the latest supabase/schema.sql in Supabase, then try again." });
   }
   const folderName = folderId ? materials[0]?.folderName ?? null : null;
-  const built = buildRequest({ courseName: course.name, folderName, materials, history, question, referenceMode });
+  const built = buildRequest({ courseName: course?.name ?? null, folderName, materials, history, question, referenceMode });
 
   const encoder = new TextEncoder();
   const body$ = new ReadableStream({
@@ -307,7 +316,7 @@ export async function handleRequest(req: Request, makeDeps: (req: Request) => Pr
             answer += "\n\n*(Answer cut short. Ask me to continue.)*";
             send({ t: "text", text: "\n\n*(Answer cut short. Ask me to continue.)*" });
           }
-          const id = await deps.saveTurn({ classId, folderId, question, answer, citations, referenceMode });
+          const id = await deps.saveTurn({ classId, folderId, chatId, question, answer, citations, referenceMode });
           send({ t: "done", id, trimmed: built.trimmed });
         }
       } catch (err) {
@@ -349,6 +358,10 @@ async function supabaseDeps(req: Request): Promise<Deps | null> {
       const { data } = await db.from("classes").select("id, name").eq("id", classId).maybeSingle();
       return data;
     },
+    async loadChat(chatId) {
+      const { data } = await db.from("chats").select("id, class_id, folder_id").eq("id", chatId).maybeSingle();
+      return data;
+    },
     async loadMaterials(classId, folderId) {
       let q = db.from("folders").select("id, name, position, created_at").eq("class_id", classId).is("archived_at", null);
       if (folderId) q = q.eq("id", folderId);
@@ -370,11 +383,12 @@ async function supabaseDeps(req: Request): Promise<Deps | null> {
           };
         });
     },
-    async loadHistory(classId, folderId, limit) {
-      // Each folder (and the whole course) has its own conversation.
-      const q = db.from("chat_messages").select("role, content").eq("class_id", classId);
-      const rows = check(await (folderId ? q.eq("folder_id", folderId) : q.is("folder_id", null))
-        .order("created_at", { ascending: false }).limit(limit)) ?? [];
+    async loadHistory({ classId, folderId, chatId }, limit) {
+      // A chat has its own history; otherwise each folder (and the whole course) has its own conversation.
+      const q = db.from("chat_messages").select("role, content");
+      const scoped = chatId ? q.eq("chat_id", chatId)
+        : (folderId ? q.eq("folder_id", folderId) : q.is("folder_id", null)).eq("class_id", classId!).is("chat_id", null);
+      const rows = check(await scoped.order("created_at", { ascending: false }).limit(limit)) ?? [];
       return rows.reverse();
     },
     async consumeMessage(limit) {
@@ -383,12 +397,15 @@ async function supabaseDeps(req: Request): Promise<Deps | null> {
     async recordTokens(input, output) {
       await admin.rpc("ai_record_tokens", { p_user: user.id, p_input: input, p_output: output });
     },
-    async saveTurn({ classId, folderId, question, answer, citations, referenceMode }) {
+    async saveTurn({ classId, folderId, chatId, question, answer, citations, referenceMode }) {
       const now = Date.now();
+      // Messages in a chat are filed under the chat only, so moving the chat moves them with it.
+      const home = chatId ? { class_id: null, folder_id: null, chat_id: chatId } : { class_id: classId, folder_id: folderId };
       const rows = check(await admin.from("chat_messages").insert([
-        { user_id: user.id, class_id: classId, folder_id: folderId, role: "user", content: question, reference_mode: referenceMode, created_at: new Date(now).toISOString() },
-        { user_id: user.id, class_id: classId, folder_id: folderId, role: "assistant", content: answer, citations, reference_mode: referenceMode, created_at: new Date(now + 1).toISOString() },
+        { user_id: user.id, ...home, role: "user", content: question, reference_mode: referenceMode, created_at: new Date(now).toISOString() },
+        { user_id: user.id, ...home, role: "assistant", content: answer, citations, reference_mode: referenceMode, created_at: new Date(now + 1).toISOString() },
       ]).select("id, role"));
+      if (chatId) await admin.from("chats").update({ updated_at: new Date(now).toISOString() }).eq("id", chatId);
       return rows?.find((r: { role: string }) => r.role === "assistant")?.id ?? "";
     },
   };

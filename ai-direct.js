@@ -123,7 +123,7 @@
     if (docBlocks.length) docBlocks[docBlocks.length - 1].cache_control = { type: 'ephemeral' };
 
     const lines = [
-      `You are Eigen, a study assistant for the university course ${courseName}.`,
+      courseName ? `You are Eigen, a study assistant for the university course ${courseName}.` : 'You are Eigen, a study assistant for a university student.',
       folderName ? `The student is asking about the folder "${folderName}" in this course.` : '',
       '',
       'The student\'s course materials are attached as documents at the start of the conversation. They are your primary source:',
@@ -232,7 +232,7 @@
     });
 
     const lines = [
-      `You are Eigen, a study assistant for the university course ${courseName}.`,
+      courseName ? `You are Eigen, a study assistant for the university course ${courseName}.` : 'You are Eigen, a study assistant for a university student.',
       folderName ? `The student is asking about the folder "${folderName}" in this course.` : '',
       '',
       'The student\'s course materials are in the first message, as numbered <document> elements split into pages, slides or sections. They are your primary source:',
@@ -403,7 +403,7 @@
     };
   }
 
-  async function askGemini({ course, classId, folderId, folderName, question, referenceMode, materials, history, userId, onEvent }) {
+  async function askGemini({ course, classId, folderId, chatId, folderName, question, referenceMode, materials, history, userId, onEvent }) {
     const key = getGeminiKey();
     let model = getGeminiModel();
     if (!model) {
@@ -412,7 +412,7 @@
       if (!model) return onEvent({ t: 'error', message: 'No Gemini model is available for your key. Open Settings to check it.' });
       setGeminiModel(model);
     }
-    const built = buildGeminiRequest({ courseName: course.name, folderName, materials, history, question, referenceMode });
+    const built = buildGeminiRequest({ courseName: course?.name ?? null, folderName, materials, history, question, referenceMode });
     let res;
     try {
       res = await fetch(`${GEMINI_API}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, {
@@ -465,7 +465,7 @@
       onEvent({ t: 'text', text: note });
     }
     if (!answer.trim()) return onEvent({ t: 'error', message: 'Gemini returned an empty answer. Please try again.' });
-    const id = await saveTurn({ userId, classId, folderId, question, answer, citations: result.citations, referenceMode });
+    const id = await saveTurn({ userId, classId, folderId, chatId, question, answer, citations: result.citations, referenceMode });
     onEvent({ t: 'done', id, trimmed: built.trimmed });
   }
 
@@ -490,36 +490,42 @@
       });
   }
 
-  async function loadHistory(classId, folderId) {
-    // Each folder (and the whole course) has its own conversation.
-    const q = db().from('chat_messages').select('role, content').eq('class_id', classId);
-    const { data, error } = await (folderId ? q.eq('folder_id', folderId) : q.is('folder_id', null))
-      .order('created_at', { ascending: false }).limit(HISTORY_MESSAGES);
+  async function loadHistory(classId, folderId, chatId) {
+    // A chat has its own history; otherwise each folder (and the whole course) has its own conversation.
+    const q = db().from('chat_messages').select('role, content');
+    const scoped = chatId ? q.eq('chat_id', chatId)
+      : (folderId ? q.eq('folder_id', folderId) : q.is('folder_id', null)).eq('class_id', classId).is('chat_id', null);
+    const { data, error } = await scoped.order('created_at', { ascending: false }).limit(HISTORY_MESSAGES);
     if (error) throw error;
     return data.reverse();
   }
 
-  async function saveTurn({ userId, classId, folderId, question, answer, citations, referenceMode }) {
+  async function saveTurn({ userId, classId, folderId, chatId, question, answer, citations, referenceMode }) {
     const now = Date.now();
+    // Messages in a chat are filed under the chat only, so moving the chat moves them with it.
+    const home = chatId ? { class_id: null, folder_id: null, chat_id: chatId } : { class_id: classId, folder_id: folderId };
     const { data, error } = await db().from('chat_messages').insert([
-      { user_id: userId, class_id: classId, folder_id: folderId, role: 'user', content: question, reference_mode: referenceMode, created_at: new Date(now).toISOString() },
-      { user_id: userId, class_id: classId, folder_id: folderId, role: 'assistant', content: answer, citations, reference_mode: referenceMode, created_at: new Date(now + 1).toISOString() },
+      { user_id: userId, ...home, role: 'user', content: question, reference_mode: referenceMode, created_at: new Date(now).toISOString() },
+      { user_id: userId, ...home, role: 'assistant', content: answer, citations, reference_mode: referenceMode, created_at: new Date(now + 1).toISOString() },
     ]).select('id, role');
     if (error) { console.error(error); return null; } // the answer still shows; it just isn't saved
+    if (chatId) await db().from('chats').update({ updated_at: new Date(now).toISOString() }).eq('id', chatId);
     return data?.find(r => r.role === 'assistant')?.id ?? null;
   }
 
   // Streams an answer. onEvent receives the same events as the server function:
   // { t: 'text', text } | { t: 'cite', n, source } | { t: 'done', id, trimmed } | { t: 'error', message }
-  async function ask({ userId, classId, folderId, question, referenceMode, onEvent }) {
-    const course = window.eigenClasses.findClass(classId);
-    const [materials, history] = await Promise.all([loadMaterials(course, folderId), loadHistory(classId, folderId)]);
+  // A chat (chatId) answers from the course or folder it sits in, if any (classId/folderId).
+  async function ask({ userId, classId, folderId, chatId = null, question, referenceMode, onEvent }) {
+    const course = classId ? window.eigenClasses.findClass(classId) : null;
+    if (!course) folderId = null;
+    const [materials, history] = await Promise.all([course ? loadMaterials(course, folderId) : [], loadHistory(classId, folderId, chatId)]);
     const folderName = folderId ? course.folders.find(f => f.id === folderId)?.name ?? null : null;
     if (getProvider() === 'gemini') {
-      return askGemini({ course, classId, folderId, folderName, question, referenceMode, materials, history, userId, onEvent });
+      return askGemini({ course, classId, folderId, chatId, folderName, question, referenceMode, materials, history, userId, onEvent });
     }
     const { Anthropic, api } = await client();
-    const built = buildRequest({ courseName: course.name, folderName, materials, history, question, referenceMode });
+    const built = buildRequest({ courseName: course?.name ?? null, folderName, materials, history, question, referenceMode });
 
     const citations = [];
     const citeKey = new Map();
@@ -582,7 +588,7 @@
         answer += note;
         onEvent({ t: 'text', text: note });
       }
-      const id = await saveTurn({ userId, classId, folderId, question, answer, citations, referenceMode });
+      const id = await saveTurn({ userId, classId, folderId, chatId, question, answer, citations, referenceMode });
       onEvent({ t: 'done', id, trimmed: built.trimmed });
     } catch (err) {
       console.error(err);

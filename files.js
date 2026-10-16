@@ -21,7 +21,7 @@
   let user = window.eigen?.currentUser?.() ?? null; // may already be signed in by the time this loads
   let folderId = null;
   let files = [];        // uploaded files in the open folder
-  let uploads = [];      // [{ id, name, size }] in progress
+  let uploads = [];      // [{ id, name, size, folderId }] in progress
   let usage = 0;         // bytes used across all folders
   let status = 'idle';   // 'idle' | 'loading' | 'ready' | 'error'
   let loadToken = 0;
@@ -102,16 +102,18 @@
     await db().from('files').delete().in('id', data.map(r => r.id));
   }
 
-  async function uploadFiles(list) {
-    if (!user || !folderId || status !== 'ready') return;
-    const targetFolder = folderId;
+  // Uploads into the open folder, or into any folder when files are dropped on it in the sidebar.
+  async function uploadFiles(list, targetFolder = folderId) {
+    if (!user || !targetFolder) return;
+    if (targetFolder === folderId ? status !== 'ready' : !await refreshUsage()) return;
+    let done = 0;
     for (const file of list) {
       if (file.size > MAX_FILE) { toast(`${file.name} is over ${formatSize(MAX_FILE)}.`); continue; }
       if (usage + file.size > QUOTA) { toast(describeError({ message: 'storage_quota' })); break; }
 
       const id = crypto.randomUUID();
       const path = `${user.id}/${id}`;
-      const pending = { id, name: file.name, size: file.size };
+      const pending = { id, name: file.name, size: file.size, folderId: targetFolder };
       uploads.push(pending);
       usage += file.size;
       render();
@@ -132,6 +134,7 @@
         if (mark.error) throw mark.error;
         row.aiStatus = window.eigenReader.statusOf(id); // it may already have been read during the upload
         if (folderId === targetFolder) files.unshift(row);
+        done++;
         announce();
       } catch (err) {
         console.error(err);
@@ -146,6 +149,19 @@
         render();
       }
     }
+    // Dropped on a folder in the sidebar: say where the files went.
+    if (done && targetFolder !== folderId) {
+      const where = window.eigenClasses.findFolder(targetFolder);
+      toast(`Uploaded ${done} file${done === 1 ? '' : 's'} to ${where?.f.name ?? 'the folder'}.`,
+        { label: 'Open', run: () => { location.hash = '#folder/' + targetFolder; } });
+    }
+  }
+
+  async function refreshUsage() {
+    const { data, error } = await db().from('files').select('size');
+    if (error) { toast(describeError(error)); return false; }
+    usage = data.reduce((sum, r) => sum + Number(r.size), 0);
+    return true;
   }
 
   const findFile = id => files.find(f => f.id === id);
@@ -249,7 +265,8 @@
     if (status === 'loading') return content.replaceChildren(el(`<p class="files-status">Loading files…</p>`));
     if (status === 'error') return content.replaceChildren(el(`<p class="files-status">Couldn’t load files.</p>`));
 
-    if (!files.length && !uploads.length) {
+    const here = uploads.filter(u => u.folderId === folderId);
+    if (!files.length && !here.length) {
       content.replaceChildren(el(`
         <button class="drop-zone" type="button" data-action="pick">
           ${icon('upload')}
@@ -260,7 +277,7 @@
     }
 
     const ul = el(`<ul class="file-list"></ul>`);
-    for (const u of uploads) {
+    for (const u of here) {
       const li = el(`
         <li class="file-item uploading">
           <span class="file-badge"></span>
@@ -377,6 +394,8 @@
     e.preventDefault();
     uploadFiles([...e.dataTransfer.files]);
   });
+
+  window.eigenFiles = { upload: uploadFiles, canUpload: () => !!user && !!db() };
 
   // ---------- Routing ----------
   function sync() {

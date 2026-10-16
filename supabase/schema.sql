@@ -236,7 +236,44 @@ create policy "file_texts: owner can delete" on public.file_texts for delete to 
 
 grant select, insert, update, delete on public.file_texts to authenticated;
 
+-- Chats started from the home page. A chat can stand on its own or be dragged into a course or a
+-- folder, after which it answers from that course's (or folder's) files.
+create table if not exists public.chats (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  title       text not null default 'New chat' check (char_length(title) between 1 and 120),
+  class_id    uuid references public.classes (id) on delete set null,
+  folder_id   uuid references public.folders (id) on delete set null,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+
+create index if not exists chats_user_idx on public.chats (user_id, updated_at desc);
+
+alter table public.chats enable row level security;
+
+drop policy if exists "chats: owner can read"   on public.chats;
+drop policy if exists "chats: owner can insert" on public.chats;
+drop policy if exists "chats: owner can update" on public.chats;
+drop policy if exists "chats: owner can delete" on public.chats;
+
+-- A chat can only be put in a course or folder the same user owns.
+create policy "chats: owner can read"   on public.chats for select to authenticated using (user_id = auth.uid());
+create policy "chats: owner can insert" on public.chats for insert to authenticated
+  with check (user_id = auth.uid()
+    and (class_id is null or exists (select 1 from public.classes c where c.id = class_id and c.user_id = auth.uid()))
+    and (folder_id is null or exists (select 1 from public.folders f where f.id = folder_id and f.user_id = auth.uid())));
+create policy "chats: owner can update" on public.chats for update to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid()
+    and (class_id is null or exists (select 1 from public.classes c where c.id = class_id and c.user_id = auth.uid()))
+    and (folder_id is null or exists (select 1 from public.folders f where f.id = folder_id and f.user_id = auth.uid())));
+create policy "chats: owner can delete" on public.chats for delete to authenticated using (user_id = auth.uid());
+
+grant select, insert, update, delete on public.chats to authenticated;
+
 -- Course chat history, saved by the course-chat function or (with your own API key) by the browser.
+-- Messages with a chat_id belong to that chat; the rest are a course's (or folder's) own chat.
 create table if not exists public.chat_messages (
   id              uuid primary key default gen_random_uuid(),
   user_id         uuid not null references auth.users (id) on delete cascade,
@@ -249,7 +286,14 @@ create table if not exists public.chat_messages (
   created_at      timestamptz not null default now()
 );
 
+-- Chats (added later; safe on existing tables)
+alter table public.chat_messages add column if not exists chat_id uuid references public.chats (id) on delete cascade;
+alter table public.chat_messages alter column class_id drop not null;
+alter table public.chat_messages drop constraint if exists chat_messages_has_home;
+alter table public.chat_messages add constraint chat_messages_has_home check (class_id is not null or chat_id is not null);
+
 create index if not exists chat_messages_class_idx on public.chat_messages (class_id, created_at);
+create index if not exists chat_messages_chat_idx on public.chat_messages (chat_id, created_at);
 create index if not exists chat_messages_user_idx on public.chat_messages (user_id);
 
 alter table public.chat_messages enable row level security;
@@ -261,7 +305,9 @@ drop policy if exists "chat_messages: owner can delete" on public.chat_messages;
 create policy "chat_messages: owner can read"   on public.chat_messages for select to authenticated using (user_id = auth.uid());
 -- Users who bring their own API key chat straight from the browser, so they save their own messages.
 create policy "chat_messages: owner can insert" on public.chat_messages for insert to authenticated
-  with check (user_id = auth.uid() and exists (select 1 from public.classes c where c.id = class_id and c.user_id = auth.uid()));
+  with check (user_id = auth.uid()
+    and (class_id is null or exists (select 1 from public.classes c where c.id = class_id and c.user_id = auth.uid()))
+    and (chat_id is null or exists (select 1 from public.chats h where h.id = chat_id and h.user_id = auth.uid())));
 create policy "chat_messages: owner can delete" on public.chat_messages for delete to authenticated using (user_id = auth.uid());
 
 grant select, insert, delete on public.chat_messages to authenticated;

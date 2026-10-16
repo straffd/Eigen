@@ -2,7 +2,8 @@
 // Signed in: stored in Supabase (tables from supabase/schema.sql).
 // Signed out: stored in this browser's localStorage, and moved into the account on first sign-in.
 // Archived classes and folders are hidden from the sidebar and listed on the Archive page.
-// Folders can be dragged to reorder them or move them to another class.
+// Folders can be dragged to reorder them or move them to another class. Chats (chats.js) and files
+// from the desktop can be dropped on a course or folder too.
 (() => {
   const MAX_CLASSES = 4; // Free plan limit (also enforced by the database)
   const MAX_NAME = 40;
@@ -302,11 +303,17 @@
   // ---------- Render ----------
   // Keep the class holding the open folder expanded, so the folder shows as selected.
   function expandOpenFolder() {
+    if (location.hash.startsWith('#chat/')) {
+      const chat = window.eigenChats?.find(location.hash.slice(6));
+      if (chat?.classId && findClass(chat.classId)) expanded.add(chat.classId);
+      return;
+    }
     if (!location.hash.startsWith('#folder/')) return;
     const id = location.hash.slice(8);
     const c = classes.find(x => x.folders.some(f => f.id === id));
     if (c) expanded.add(c.id);
   }
+  const chatsUnder = (classId, folderId) => (window.eigenChats ? window.eigenChats.under(classId, folderId).map(window.eigenChats.row) : []);
 
   function render() {
     expandOpenFolder();
@@ -342,11 +349,13 @@
     li.querySelector('.class-name').textContent = c.name;
     const folders = li.querySelector('.folder-list');
     const shown = c.folders.filter(isActive);
+    const chats = chatsUnder(c.id, null);
     if (shown.length) {
       folders.append(...shown.map(f => renderFolder(c, f)));
-    } else {
+    } else if (!chats.length) {
       folders.append(el(`<li class="folder-empty">${c.folders.length ? 'All folders archived' : 'No folders yet'}</li>`));
     }
+    folders.append(...chats);
     return li;
   }
 
@@ -357,6 +366,12 @@
       </li>`);
     li.querySelector('.folder-name').textContent = f.name;
     li.querySelector('.folder-size').textContent = sizeLabel(f.id);
+    const chats = chatsUnder(c.id, f.id);
+    if (chats.length) {
+      const ul = el(`<ul class="folder-chats"></ul>`);
+      ul.append(...chats);
+      li.append(ul);
+    }
     return li;
   }
 
@@ -594,7 +609,52 @@
     return { classId, beforeFolderId: null, mark: [classEl.querySelector('.class-item'), 'drop-into'] };
   }
 
+  // Chats and desktop files drop *into* a folder, or into a course (chats: the whole course;
+  // files: its "Uploads" folder, made if needed).
+  const draggingChat = e => ([...(e.dataTransfer?.types || [])].includes('application/x-eigen-chat') && window.eigenChats?.draggingId()) || null;
+  const draggingFiles = e => [...(e.dataTransfer?.types || [])].includes('Files');
+  function intoTarget(e) {
+    const classEl = e.target.closest('[data-class-id]');
+    if (!classEl) return null;
+    const folderEl = e.target.closest('[data-folder-id]');
+    return folderEl
+      ? { classId: classEl.dataset.classId, folderId: folderEl.dataset.folderId, mark: [folderEl, 'drop-into'] }
+      : { classId: classEl.dataset.classId, folderId: null, mark: [classEl.querySelector('.class-item'), 'drop-into'] };
+  }
+  // Hovering a closed course while dragging opens it, so its folders can be reached.
+  let hoverTimer = 0, hoverClass = null;
+  function openOnHover(classId) {
+    if (hoverClass === classId) return;
+    clearTimeout(hoverTimer);
+    hoverClass = classId;
+    if (classId && !expanded.has(classId)) hoverTimer = setTimeout(() => { expanded.add(classId); render(); }, 700);
+  }
+
+  async function uploadsFolder(c) {
+    const existing = c.folders.find(f => isActive(f) && f.name.toLowerCase() === 'uploads');
+    if (existing) return existing;
+    const last = c.folders[c.folders.length - 1];
+    const f = { id: uid(), name: 'Uploads', createdAt: Date.now(), archivedAt: null, position: (last?.position ?? 0) + 1 };
+    c.folders.push(f);
+    expanded.add(c.id);
+    await commit('addFolder', c, f);
+    return findClass(c.id)?.folders.find(x => x.id === f.id) ?? null;
+  }
+
+  async function dropFiles(files, classId, folderId) {
+    if (!files.length) return;
+    if (store.kind !== 'supabase' || !window.eigenFiles?.canUpload()) return toast('Sign in to upload files.');
+    const c = findClass(classId);
+    if (!c) return;
+    const folder = folderId ? c.folders.find(f => f.id === folderId) : await uploadsFolder(c);
+    if (!folder) return;
+    expanded.add(c.id);
+    render();
+    window.eigenFiles.upload(files, folder.id);
+  }
+
   list.addEventListener('dragstart', e => {
+    if (e.target.closest('[data-chat-id]')) return; // chats.js handles those
     const folderEl = e.target.closest('[data-folder-id]');
     const classEl = e.target.closest('[data-class-id]');
     if (!folderEl || !classEl) return;
@@ -604,6 +664,16 @@
     requestAnimationFrame(() => folderEl.classList.add('dragging'));
   });
   list.addEventListener('dragover', e => {
+    if (!drag && (draggingChat(e) || draggingFiles(e))) {
+      const t = intoTarget(e);
+      clearDropMarks();
+      openOnHover(t?.classId ?? null);
+      if (!t) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = draggingChat(e) ? 'move' : 'copy';
+      t.mark[0].classList.add(t.mark[1]);
+      return;
+    }
     if (!drag) return;
     const t = dropTarget(e);
     clearDropMarks();
@@ -612,8 +682,18 @@
     e.dataTransfer.dropEffect = 'move';
     t.mark[0].classList.add(t.mark[1]);
   });
-  list.addEventListener('dragleave', e => { if (!list.contains(e.relatedTarget)) clearDropMarks(); });
+  list.addEventListener('dragleave', e => { if (!list.contains(e.relatedTarget)) { clearDropMarks(); openOnHover(null); } });
   list.addEventListener('drop', e => {
+    openOnHover(null);
+    if (!drag && (draggingChat(e) || draggingFiles(e))) {
+      const t = intoTarget(e);
+      clearDropMarks();
+      if (!t) return;
+      e.preventDefault();
+      if (draggingChat(e)) window.eigenChats.move(draggingChat(e), t.classId, t.folderId);
+      else dropFiles([...e.dataTransfer.files], t.classId, t.folderId);
+      return;
+    }
     if (!drag) return;
     const t = dropTarget(e);
     clearDropMarks();
@@ -623,6 +703,7 @@
   });
   list.addEventListener('dragend', () => {
     drag = null;
+    openOnHover(null);
     clearDropMarks();
     list.querySelectorAll('.dragging').forEach(n => n.classList.remove('dragging'));
   });
@@ -721,6 +802,7 @@
   });
 
   document.addEventListener('eigen:files-changed', () => { if (status === 'ready') refreshSizes(); });
+  document.addEventListener('eigen:chats', render);
 
   // Shared with files.js.
   window.eigenUI = { el, icon, toast, confirmDelete, openMenu, closeMenu, inlineInput };

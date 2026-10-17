@@ -213,6 +213,11 @@
   const announce = () => document.dispatchEvent(new CustomEvent('eigen:files-changed'));
 
   async function openFile(id) { return openRow(findFile(id)); }
+  // Clicking a file shows it in the side panel (like a reference), rather than a new tab.
+  function previewFile(id) {
+    const f = findFile(id);
+    if (f) window.eigenViewer.preview({ fileId: f.id, fileName: f.name });
+  }
   // Opens any file row (also used by the course library) in a new tab.
   async function openRow(f) {
     if (!f) return;
@@ -460,9 +465,18 @@
     }
     if (action === 'signin') return $('signin-open').click();
     const id = e.target.closest('[data-file-id]')?.dataset.fileId;
-    if (action === 'open') openFile(id);
+    if (action === 'open') previewFile(id);
     if (action === 'download') downloadFile(id);
     if (action === 'delete') deleteFile(id);
+  });
+
+  // A written note previews in the side panel too; its Edit button (or the menu) opens the editor.
+  content.addEventListener('click', e => {
+    const noteLi = e.target.closest('[data-note-id]');
+    if (!noteLi) return;
+    e.preventDefault();
+    const n = notes.find(x => x.id === noteLi.dataset.noteId);
+    if (n) window.eigenViewer.preview({ fileId: 'note:' + n.id, fileName: n.title });
   });
 
   content.addEventListener('contextmenu', e => {
@@ -470,8 +484,10 @@
     if (noteLi) {
       e.preventDefault();
       const id = noteLi.dataset.noteId;
+      const n = notes.find(x => x.id === id);
       return openMenu(e.clientX, e.clientY, [
-        { label: 'Open', icon: 'pencil', run: () => { location.hash = '#note/' + id; } },
+        { label: 'Preview', icon: 'file', run: () => n && window.eigenViewer.preview({ fileId: 'note:' + id, fileName: n.title }) },
+        { label: 'Edit', icon: 'pencil', run: () => { location.hash = '#note/' + id; } },
         '-',
         { label: 'Delete note', icon: 'trash', danger: true, run: () => window.eigenNotes.remove(id) },
       ]);
@@ -481,7 +497,8 @@
     e.preventDefault();
     const id = li.dataset.fileId;
     openMenu(e.clientX || li.getBoundingClientRect().left, e.clientY || li.getBoundingClientRect().bottom, [
-      { label: 'Open', icon: 'external', run: () => openFile(id) },
+      { label: 'Preview', icon: 'file', run: () => previewFile(id) },
+      { label: 'Open in new tab', icon: 'external', run: () => openFile(id) },
       { label: 'Download', icon: 'download', run: () => downloadFile(id) },
       { label: 'Rename', icon: 'pencil', run: () => renameFile(id) },
       (findFile(id)?.kind ?? 'context') === 'context'
@@ -541,7 +558,7 @@
   const sidebar = document.querySelector('.sidebar');
   sidebar.addEventListener('click', e => {
     const item = e.target.closest('.course-file[data-file-id]');
-    if (item && !e.target.closest('.inline-input')) openFile(item.dataset.fileId);
+    if (item && !e.target.closest('.inline-input')) previewFile(item.dataset.fileId);
   });
   sidebar.addEventListener('contextmenu', e => {
     const item = e.target.closest('.course-file[data-file-id]');
@@ -551,7 +568,8 @@
     const id = item.dataset.fileId;
     const r = item.getBoundingClientRect();
     openMenu(e.clientX || r.left, e.clientY || r.bottom, [
-      { label: 'Open', icon: 'external', run: () => openFile(id) },
+      { label: 'Preview', icon: 'file', run: () => previewFile(id) },
+      { label: 'Open in new tab', icon: 'external', run: () => openFile(id) },
       { label: 'Download', icon: 'download', run: () => downloadFile(id) },
       { label: 'Rename', icon: 'pencil', run: () => renameFile(id) },
       '-',

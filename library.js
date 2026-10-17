@@ -146,9 +146,11 @@
       li.querySelector('.file-name').textContent = it.name;
       li.querySelector('.file-meta').textContent = [it.type === 'folder' ? null : it.where, it.meta, formatDate(it.time)].filter(Boolean).join(' · ');
       li.querySelector('.kind-tag').textContent = BADGE[it.kind];
+      // Folders open; files and notes preview in the side panel.
       li.querySelector('.file-open').addEventListener('click', () => {
-        if (it.href) location.hash = it.href;
-        else window.eigenFiles.openRow(it.file);
+        if (it.type === 'folder') location.hash = it.href;
+        else if (it.type === 'note') window.eigenViewer.preview({ fileId: 'note:' + it.href.slice(6), fileName: it.name });
+        else window.eigenViewer.preview({ fileId: it.file.id, fileName: it.name });
       });
       ul.append(li);
     }

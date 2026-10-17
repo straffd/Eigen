@@ -8,6 +8,7 @@
   const body = $('viewer-body');
   const noteEl = $('viewer-note');
   const prevBtn = $('viewer-prev');
+  const openBtn = $('viewer-open');
   const nextBtn = $('viewer-next');
   const main = document.querySelector('.main');
   const { el, toast } = window.eigenUI;
@@ -91,11 +92,29 @@
   }
 
   // ---------- Loading ----------
+  const isNote = id => id.startsWith('note:');
   async function loadFile(fileId) {
     if (fileCache.has(fileId)) return fileCache.get(fileId);
+    // A note written in Eigen: shown as text.
+    if (isNote(fileId)) {
+      const { data: note } = await db().from('notes').select('id, title, body').eq('id', fileId.slice(5)).maybeSingle();
+      if (!note) throw new Error('That note has been deleted.');
+      return { file: { name: note.title }, note, pdf: null, pages: [note.body] }; // not cached: notes change as you type
+    }
     const { data: file, error } = await db().from('files').select('id, name, mime_type, storage_path').eq('id', fileId).maybeSingle();
     if (error || !file) throw new Error('That file has been deleted.');
     const entry = { file, pdf: null, pages: null };
+    // Images and videos are shown as they are.
+    const media = /^image\//.test(file.mime_type || '') || /\.(png|jpe?g|gif|webp|svg)$/i.test(file.name) ? 'image'
+      : /^video\//.test(file.mime_type || '') || /\.(mp4|mov|m4v|webm)$/i.test(file.name) ? 'video' : null;
+    if (media) {
+      const { data } = await db().storage.from('files').createSignedUrl(file.storage_path, 3600);
+      if (!data?.signedUrl) throw new Error('Couldn’t open that file.');
+      entry.media = { type: media, url: data.signedUrl };
+      entry.pages = [];
+      fileCache.set(fileId, entry);
+      return entry;
+    }
     if (/\.pdf$/i.test(file.name) || file.mime_type === 'application/pdf') {
       try {
         const { data: blob, error: dlErr } = await db().storage.from('files').download(file.storage_path);
@@ -148,13 +167,24 @@
       return;
     }
     if (token !== renderToken) return;
+    if (entry.note) { titleEl.textContent = entry.note.title; titleEl.title = entry.note.title; }
+    if (entry.media || (!entry.pdf && !entry.pages.some(t => t.trim()) && c.preview)) {
+      // Nothing to page through: an image, a video, or a file Eigen has no text for.
+      prevBtn.hidden = nextBtn.hidden = true;
+      pageEl.textContent = entry.media ? (entry.media.type === 'image' ? 'Image' : 'Video') : '';
+      if (entry.media?.type === 'image') body.replaceChildren(Object.assign(el(`<img class="viewer-media" alt="">`), { src: entry.media.url, alt: c.fileName }));
+      else if (entry.media) body.replaceChildren(Object.assign(el(`<video class="viewer-media" controls></video>`), { src: entry.media.url }));
+      else body.replaceChildren(el(`<p class="viewer-status">No preview for this kind of file yet. Use the open button above to view it in a new tab.</p>`));
+      return;
+    }
     const total = entry.pdf ? entry.pdf.numPages : Math.max(entry.pages.length, 1);
     current.total = total;
     current.page = Math.min(Math.max(current.page || 1, 1), total);
-    pageEl.textContent = `${unitName(c.fileName)} ${current.page} of ${total}`;
+    pageEl.textContent = entry.note ? 'Note' : `${unitName(c.fileName)} ${current.page} of ${total}`;
+    prevBtn.hidden = nextBtn.hidden = total <= 1;
     prevBtn.disabled = current.page <= 1;
     nextBtn.disabled = current.page >= total;
-    const highlightHere = current.page === c.page;
+    const highlightHere = !c.preview && current.page === c.page; // a preview shows the file without highlights
     body.replaceChildren();
     const kind = await renderPage(entry, c, current.page, highlightHere, token, body);
     if (token !== renderToken) return;
@@ -290,13 +320,19 @@
 
   // ---------- Opening & closing ----------
   const asItem = cite => ({
-    n: cite.n, fileId: cite.fileId, fileName: cite.fileName, page: cite.page || 1,
+    n: cite.n, fileId: cite.fileId, fileName: cite.fileName, page: cite.page || 1, preview: !!cite.preview,
     quote: cite.quote || '', quotes: cite.quotes || [], claim: cite.claim || '', approximate: !!cite.approximate,
   });
+  // preview(file) shows a whole file (or a note, fileId 'note:<id>') from its first page, without highlights.
+  const preview = ({ fileId, fileName }) => open({ fileId, fileName, page: 1, preview: true });
   // open(cite) shows one page; open([cites], focusIndex) shows several cited pages together.
   function open(cites, focus = 0) {
     const items = (Array.isArray(cites) ? cites : [cites]).map(asItem);
     current = { items, focus: Math.max(0, Math.min(focus, items.length - 1)), page: items[0].page };
+    const note = items.length === 1 && isNote(items[0].fileId);
+    openBtn.title = note ? 'Edit note' : 'Open in a new tab';
+    openBtn.setAttribute('aria-label', openBtn.title);
+    openBtn.querySelector('use').setAttribute('href', note ? '#i-pencil' : '#i-external');
     panel.hidden = false;
     main.classList.add('with-viewer');
     render();
@@ -311,8 +347,9 @@
   prevBtn.addEventListener('click', () => { if (current && current.page > 1) { current.page--; render(); } });
   nextBtn.addEventListener('click', () => { if (current && current.page < current.total) { current.page++; render(); } });
   $('viewer-close').addEventListener('click', close);
-  $('viewer-open').addEventListener('click', async () => {
+  openBtn.addEventListener('click', async () => {
     if (!current) return;
+    if (current.items.length === 1 && isNote(current.items[0].fileId)) { location.hash = '#note/' + current.items[0].fileId.slice(5); return; }
     const win = window.open('', '_blank');
     try {
       const item = current.items.length > 1 ? current.items[current.focus] : current.items[0];
@@ -324,12 +361,12 @@
     } catch { win?.close(); toast('Couldn’t open that file.'); }
   });
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !panel.hidden && !document.querySelector('dialog[open]')) close(); });
-  // Leaving the chat closes the viewer; a resize re-fits the page.
-  window.addEventListener('hashchange', () => { if (!location.hash.startsWith('#course/')) close(); });
+  // Going to another page closes the viewer; a resize re-fits the page.
+  window.addEventListener('hashchange', close);
   let resizeTimer;
   window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (current) render(); }, 200); });
   // Files can change while the viewer is open.
   document.addEventListener('eigen:files-changed', () => fileCache.clear());
 
-  window.eigenViewer = { open, close, _findQuote: findQuote, _bestPassage: bestPassage };
+  window.eigenViewer = { open, preview, close, isOpen: id => !!current && current.items.some(c => c.fileId === id), _findQuote: findQuote, _bestPassage: bestPassage };
 })();

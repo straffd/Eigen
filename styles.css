@@ -1048,6 +1048,7 @@ svg.lg { width: 24px; height: 24px; stroke-width: 1.4; }
 /* ---------- Cited document viewer ---------- */
 .main.with-viewer { justify-content: flex-start; gap: 0; padding-right: 0; }
 .main.with-viewer .chat-view { flex: 1; min-width: 360px; max-width: none; padding-right: 24px; }
+.main.with-viewer .folder-view, .main.with-viewer .library-view, .main.with-viewer .note-view { flex: 1; min-width: 380px; max-width: none; padding-right: 24px; }
 .doc-viewer {
   order: 2;
   display: flex;
@@ -1055,9 +1056,13 @@ svg.lg { width: 24px; height: 24px; stroke-width: 1.4; }
   width: min(46%, 760px);
   flex-shrink: 0;
   height: 100vh;
+  position: sticky;   /* stays in view while the page beside it scrolls */
+  top: 0;
+  align-self: flex-start;
   border-left: 1px solid #262626;
   background: var(--sidebar-bg);
 }
+.viewer-media { display: block; max-width: 100%; margin: 0 auto; border-radius: 8px; }
 .viewer-header { display: flex; align-items: center; gap: 12px; padding: 14px 12px 12px 18px; border-bottom: 1px solid #262626; }
 .viewer-heading { min-width: 0; flex: 1; }
 .viewer-title { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1095,7 +1100,7 @@ svg.lg { width: 24px; height: 24px; stroke-width: 1.4; }
 .file-row .file-name { font-weight: 400; }
 
 /* ---------- Folder page: Context | Notes & docs ---------- */
-.folder-split { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+.folder-split { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 20px; align-items: start; }
 .folder-pane { min-width: 0; padding: 14px; border: 1px solid #262626; border-radius: 14px; background: #171717; transition: border-color .15s, background .15s; }
 .folder-pane.drop-target { border-color: var(--text-muted); background: #1d1d1d; }
 .pane-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
@@ -1108,7 +1113,6 @@ svg.lg { width: 24px; height: 24px; stroke-width: 1.4; }
 .note-badge { color: #c9b6f2; }
 .note-badge svg { width: 18px; height: 18px; }
 a.file-open { color: inherit; text-decoration: none; }
-@media (max-width: 900px) { .folder-split { grid-template-columns: 1fr; } }
 
 /* ---------- Note editor ---------- */
 .note-view { width: 100%; max-width: 780px; padding: 64px 0 80px; }

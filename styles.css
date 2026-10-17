@@ -195,7 +195,8 @@ svg.lg { width: 24px; height: 24px; stroke-width: 1.4; }
 }
 
 .reopen {
-  position: absolute;
+  position: fixed;   /* stays put while the page scrolls, and above page content */
+  z-index: 20;
   top: 18px;
   left: 16px;
   opacity: 0;

@@ -1144,3 +1144,12 @@ a.file-open { color: inherit; text-decoration: none; }
 .kind-tag[data-kind="notes"] { color: #c9b6f2; border-color: #3d3550; }
 .kind-tag[data-kind="context"] { color: #9fc3e8; border-color: #2e3e50; }
 .kind-tag[data-kind="course"] { color: #e5b07a; border-color: #4d3c2a; }
+/* Library tree: folders expand in place */
+.lib-folder .file-open { gap: 10px; }
+.lib-chev { width: 16px; height: 16px; flex-shrink: 0; color: var(--text-faint); transition: transform .15s; }
+.lib-folder [aria-expanded="true"] .lib-chev { transform: rotate(90deg); }
+.lib-go { margin-right: 4px; opacity: .5; }
+.lib-folder:hover .lib-go, .lib-go:focus-visible { opacity: 1; }
+.library-list .file-item.nested .file-open { padding-left: 58px; }
+.library-list .file-item.nested { background: #131313; }
+.library-list .lib-empty { padding: 12px 16px 12px 58px; font-size: 13px; color: var(--text-faint); }

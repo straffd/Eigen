@@ -19,6 +19,7 @@
   let status = 'idle';   // 'idle' | 'loading' | 'ready' | 'error'
   let loadToken = 0;
   const filters = { type: 'all', folder: '', format: '', sort: 'recent', q: '' };
+  const openFolders = new Map(); // folderId -> expanded? (unset: closed, or open when filtering finds matches)
 
   const db = () => window.eigen?.supabase;
   const course = () => (classId ? window.eigenClasses.findClass(classId) : null);
@@ -121,18 +122,34 @@
     fill(folderSel, [['', 'All folders'], ['course', 'On the course'], ...c.folders.filter(f => !f.archivedAt).map(f => [f.id, f.name])], filters.folder);
     fill(formatSel, FORMATS, filters.format);
 
-    const shown = all.filter(it => matches(it))
-      .sort(filters.sort === 'name' ? (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })
-        : (a, b) => (b.type === 'folder') - (a.type === 'folder') || b.time - a.time); // folders first
-    if (!shown.length) {
+    // A tree: folders (click to expand or collapse) with their files and notes inside, then anything
+    // kept on the course itself. Filtering or searching opens the folders that have matches.
+    const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true });
+    const order = filters.sort === 'name' ? byName : (a, b) => b.time - a.time;
+    const q = filters.q.toLowerCase();
+    const leaves = all.filter(it => it.type !== 'folder');
+    const inFolder = f => leaves.filter(it => it.folderId === f.folderId);
+    // With the Folders chip on, a folder still shows everything inside it.
+    const kidMatches = it => (filters.type === 'folder' ? matches(it, { skipType: true }) : matches(it));
+    const kids = f => inFolder(f).filter(kidMatches).sort(order);
+    const folderShown = f => {
+      if (filters.folder === 'course' || (filters.folder && f.folderId !== filters.folder)) return false;
+      if (kids(f).length) return true;
+      return ['all', 'folder'].includes(filters.type) && !filters.format && (!q || f.name.toLowerCase().includes(q));
+    };
+    const folders = all.filter(it => it.type === 'folder' && folderShown(it)).sort(byName);
+    const loose = filters.type === 'folder' ? [] : leaves.filter(it => !it.folderId && matches(it)).sort(order);
+    const filtering = !!(q || filters.format || filters.folder || ['context', 'notes'].includes(filters.type));
+    const isOpen = f => openFolders.get(f.folderId) ?? (filtering && kids(f).length > 0);
+
+    if (!folders.length && !loose.length) {
       content.replaceChildren(el(`<div class="files-empty">${icon('search')}<p class="files-empty-title">${all.length ? 'Nothing matches these filters' : 'This course is empty'}</p><p class="files-empty-text">${all.length ? 'Try another type, folder or search.' : 'Add folders, files or notes from the sidebar.'}</p></div>`));
       return;
     }
     const BADGE = { context: 'Context', notes: 'Notes & docs', course: 'Course file', folder: 'Folder' };
-    const ul = el(`<ul class="file-list library-list"></ul>`);
-    for (const it of shown) {
+    const row = (it, nested) => {
       const li = el(`
-        <li class="file-item">
+        <li class="file-item ${nested ? 'nested' : ''}">
           <button class="file-open" type="button">
             <span class="file-badge"></span>
             <span class="file-text"><span class="file-name"></span><span class="file-meta"></span></span>
@@ -140,20 +157,42 @@
           </button>
         </li>`);
       const badge = li.querySelector('.file-badge');
-      if (it.type === 'folder') badge.innerHTML = icon('folder');
-      else if (it.type === 'note') { badge.innerHTML = icon('pencil'); badge.classList.add('note-badge'); }
+      if (it.type === 'note') { badge.innerHTML = icon('pencil'); badge.classList.add('note-badge'); }
       else { const ext = (it.name.match(/\.([a-z0-9]+)$/i)?.[1] ?? 'FILE').toUpperCase().slice(0, 4); badge.textContent = ext; badge.dataset.ext = ext; }
       li.querySelector('.file-name').textContent = it.name;
-      li.querySelector('.file-meta').textContent = [it.type === 'folder' ? null : it.where, it.meta, formatDate(it.time)].filter(Boolean).join(' · ');
+      li.querySelector('.file-meta').textContent = [nested ? null : it.where, it.meta, formatDate(it.time)].filter(Boolean).join(' · ');
       li.querySelector('.kind-tag').textContent = BADGE[it.kind];
-      // Folders open; files and notes preview in the side panel.
+      // Files and notes preview in the side panel.
       li.querySelector('.file-open').addEventListener('click', () => {
-        if (it.type === 'folder') location.hash = it.href;
-        else if (it.type === 'note') window.eigenViewer.preview({ fileId: 'note:' + it.href.slice(6), fileName: it.name });
+        if (it.type === 'note') window.eigenViewer.preview({ fileId: 'note:' + it.href.slice(6), fileName: it.name });
         else window.eigenViewer.preview({ fileId: it.file.id, fileName: it.name });
       });
+      return li;
+    };
+    const ul = el(`<ul class="file-list library-list"></ul>`);
+    for (const f of folders) {
+      const open = isOpen(f);
+      const inside = kids(f);
+      const total = inFolder(f).length;
+      const li = el(`
+        <li class="file-item lib-folder">
+          <button class="file-open" type="button" aria-expanded="${open}">
+            ${icon('chevron', 'lib-chev')}
+            <span class="file-badge">${icon('folder')}</span>
+            <span class="file-text"><span class="file-name"></span><span class="file-meta"></span></span>
+          </button>
+          <a class="icon-btn lib-go" href="${f.href}" aria-label="Open folder" title="Open folder">${icon('external')}</a>
+        </li>`);
+      li.querySelector('.file-name').textContent = f.name;
+      li.querySelector('.file-meta').textContent = (inside.length < total ? `${inside.length} of ${total} items match` : `${total} item${total === 1 ? '' : 's'}`) + ` · ${formatDate(f.time)}`;
+      li.querySelector('.file-open').addEventListener('click', () => { openFolders.set(f.folderId, !open); render(); });
       ul.append(li);
+      if (open) {
+        if (inside.length) ul.append(...inside.map(it => row(it, true)));
+        else ul.append(el(`<li class="file-item nested lib-empty">Empty folder</li>`));
+      }
     }
+    ul.append(...loose.map(it => row(it, false)));
     content.replaceChildren(ul);
   }
 
@@ -182,11 +221,12 @@
     const b = e.target.closest('[data-type]');
     if (!b) return;
     filters.type = b.dataset.type;
+    openFolders.clear();
     render();
   });
-  searchEl.addEventListener('input', () => { filters.q = searchEl.value.trim(); render(); });
-  folderSel.addEventListener('change', () => { filters.folder = folderSel.value; render(); });
-  formatSel.addEventListener('change', () => { filters.format = formatSel.value; render(); });
+  searchEl.addEventListener('input', () => { filters.q = searchEl.value.trim(); openFolders.clear(); render(); });
+  folderSel.addEventListener('change', () => { filters.folder = folderSel.value; openFolders.clear(); render(); });
+  formatSel.addEventListener('change', () => { filters.format = formatSel.value; openFolders.clear(); render(); });
   sortSel.addEventListener('change', () => { filters.sort = sortSel.value; render(); });
   $('library-new-note').addEventListener('click', () => {
     const folderId = filters.folder && filters.folder !== 'course' ? filters.folder : null;
@@ -199,6 +239,7 @@
     const changed = next !== classId;
     if (changed) {
       Object.assign(filters, { type: 'all', folder: '', format: '', q: '' });
+      openFolders.clear();
       searchEl.value = '';
     }
     classId = next;

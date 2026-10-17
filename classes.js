@@ -356,7 +356,7 @@
     const folders = li.querySelector('.folder-list');
     const shown = c.folders.filter(isActive);
     const chats = chatsUnder(c.id, null);
-    const files = window.eigenFiles ? window.eigenFiles.courseRows(c.id) : [];
+    const files = [...(window.eigenNotes ? window.eigenNotes.sidebarRows(c.id, null) : []), ...(window.eigenFiles ? window.eigenFiles.courseRows(c.id) : [])];
     if (shown.length) {
       folders.append(...shown.map(f => renderFolder(c, f)));
     } else if (!chats.length && !files.length) {
@@ -373,10 +373,11 @@
       </li>`);
     li.querySelector('.folder-name').textContent = f.name;
     li.querySelector('.folder-size').textContent = sizeLabel(f.id);
-    const chats = chatsUnder(c.id, f.id);
-    if (chats.length) {
+    // Notes and chats filed in this folder show under it.
+    const inside = [...(window.eigenNotes ? window.eigenNotes.sidebarRows(c.id, f.id) : []), ...chatsUnder(c.id, f.id)];
+    if (inside.length) {
       const ul = el(`<ul class="folder-chats"></ul>`);
-      ul.append(...chats);
+      ul.append(...inside);
       li.append(ul);
     }
     return li;
@@ -662,7 +663,7 @@
   }
 
   list.addEventListener('dragstart', e => {
-    if (e.target.closest('[data-chat-id]')) return; // chats.js handles those
+    if (e.target.closest('[data-chat-id], [data-note-id], .course-file')) return; // chats.js, notes.js, files.js handle those
     const folderEl = e.target.closest('[data-folder-id]');
     const classEl = e.target.closest('[data-class-id]');
     if (!folderEl || !classEl) return;
@@ -672,13 +673,13 @@
     requestAnimationFrame(() => folderEl.classList.add('dragging'));
   });
   list.addEventListener('dragover', e => {
-    if (!drag && (draggingChat(e) || draggingFiles(e))) {
+    if (!drag && (draggingChat(e) || draggingFiles(e) || window.eigenUI.drag.has(e))) {
       const t = intoTarget(e);
       clearDropMarks();
       openOnHover(t?.classId ?? null);
       if (!t) return;
       e.preventDefault();
-      e.dataTransfer.dropEffect = draggingChat(e) ? 'move' : 'copy';
+      e.dataTransfer.dropEffect = draggingFiles(e) ? 'copy' : 'move';
       t.mark[0].classList.add(t.mark[1]);
       return;
     }
@@ -693,12 +694,13 @@
   list.addEventListener('dragleave', e => { if (!list.contains(e.relatedTarget)) { clearDropMarks(); openOnHover(null); } });
   list.addEventListener('drop', e => {
     openOnHover(null);
-    if (!drag && (draggingChat(e) || draggingFiles(e))) {
+    if (!drag && (draggingChat(e) || draggingFiles(e) || window.eigenUI.drag.has(e))) {
       const t = intoTarget(e);
       clearDropMarks();
       if (!t) return;
       e.preventDefault();
       if (draggingChat(e)) window.eigenChats.move(draggingChat(e), t.classId, t.folderId);
+      else if (window.eigenUI.drag.has(e)) window.eigenUI.drag.drop(window.eigenUI.drag.read(e), t.classId, t.folderId);
       else dropFiles([...e.dataTransfer.files], t.classId, t.folderId);
       return;
     }
@@ -814,9 +816,27 @@
   document.addEventListener('eigen:files-changed', () => { if (status === 'ready') refreshSizes(); });
   document.addEventListener('eigen:chats', render);
   document.addEventListener('eigen:course-files', render);
+  document.addEventListener('eigen:notes-changed', render);
+
+  // Files and notes can be dragged anywhere a folder or course accepts them (sidebar, folder page,
+  // library). The dragged thing travels as { type: 'file' | 'note', id }.
+  const ITEM = 'application/x-eigen-item';
+  const itemDrag = {
+    start(e, item) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData(ITEM, JSON.stringify(item));
+    },
+    has: e => [...(e.dataTransfer?.types || [])].includes(ITEM),
+    read(e) { try { return JSON.parse(e.dataTransfer.getData(ITEM)); } catch { return null; } },
+    // Moves a dragged file or note into a folder, or onto a course (folderId null).
+    drop(item, classId, folderId) {
+      if (item?.type === 'file') window.eigenFiles?.move(item.id, folderId ? { folderId } : { classId });
+      if (item?.type === 'note') window.eigenNotes?.move(item.id, { classId, folderId });
+    },
+  };
 
   // Shared with files.js.
-  window.eigenUI = { el, icon, toast, confirmDelete, openMenu, closeMenu, inlineInput };
+  window.eigenUI = { el, icon, toast, confirmDelete, openMenu, closeMenu, inlineInput, drag: itemDrag };
   window.eigenClasses = {
     status: () => status,
     findClass: id => findClass(id),

@@ -1,6 +1,7 @@
-// Notes written in Eigen (#note/<id>): a title and plain text, saved as you type. A note lives in a
-// folder (on the Notes & docs side of the folder page) or on the course itself, and the course AI
-// reads it along with the files.
+// Notes written in Eigen: a title and plain text, saved as you type. A note lives in a folder (on the
+// Notes & docs side of the folder page) or on the course itself, shows under it in the sidebar, and
+// the course AI reads it along with the files. Notes are edited in the side panel (viewer.js) or
+// full page (#note/<id>).
 (() => {
   const SAVE_DELAY = 600;
   const $ = id => document.getElementById(id);
@@ -17,9 +18,25 @@
   let dirty = false;
   let saveTimer = 0;
   let loadToken = 0;
+  let all = [];           // every note's title and place, for the sidebar: [{ id, class_id, folder_id, title, updated_at }]
 
   const db = () => window.eigen?.supabase;
-  const announce = n => document.dispatchEvent(new CustomEvent('eigen:notes-changed', { detail: { classId: n.class_id, folderId: n.folder_id } }));
+  const announce = n => {
+    const i = all.findIndex(x => x.id === n.id);
+    const gone = !n.title; // remove() announces { id } only
+    if (gone) { if (i >= 0) all.splice(i, 1); }
+    else {
+      const meta = { id: n.id, class_id: n.class_id, folder_id: n.folder_id, title: n.title, updated_at: n.updated_at };
+      if (i >= 0) all[i] = meta; else all.unshift(meta);
+    }
+    document.dispatchEvent(new CustomEvent('eigen:notes-changed', { detail: { id: n.id, classId: n.class_id, folderId: n.folder_id, from: n.from } }));
+  };
+
+  async function loadAll() {
+    const { data, error } = await db().from('notes').select('id, class_id, folder_id, title, updated_at').order('updated_at', { ascending: false });
+    all = error ? [] : data;
+    document.dispatchEvent(new CustomEvent('eigen:notes-changed', { detail: {} }));
+  }
 
   function describeError(err) {
     const msg = err?.message || '';
@@ -38,13 +55,38 @@
     return error ? [] : data;
   }
 
+  // Makes a note and opens it in the side panel, ready to type, without leaving the page.
   async function create({ classId, folderId = null }) {
     const { data, error } = await db().from('notes').insert({ class_id: classId, folder_id: folderId })
       .select('id, class_id, folder_id, title, body, created_at, updated_at').single();
     if (error) { console.error(error); toast(describeError(error)); return null; }
     announce(data);
-    location.hash = '#note/' + data.id;
+    window.eigenViewer.preview({ fileId: 'note:' + data.id, fileName: data.title, focusTitle: true });
     return data;
+  }
+
+  // Saves a change made in the side panel (title and/or body).
+  async function saveNote(id, patch) {
+    const row = { ...patch, updated_at: new Date().toISOString() };
+    if ('title' in row) row.title = row.title.trim().slice(0, 200) || 'Untitled note';
+    const { data, error } = await db().from('notes').update(row).eq('id', id).select('id, class_id, folder_id, title, updated_at').maybeSingle();
+    if (error || !data) { console.error(error); toast(describeError(error)); return false; }
+    announce(data);
+    if (note?.id === id) Object.assign(note, row);
+    return true;
+  }
+
+  // Moves a note to another folder, or onto a course (folderId null).
+  async function move(id, { classId, folderId = null }) {
+    const cur = all.find(x => x.id === id);
+    if (cur && cur.class_id === classId && cur.folder_id === folderId) return;
+    const { data, error } = await db().from('notes').update({ class_id: classId, folder_id: folderId }).eq('id', id)
+      .select('id, class_id, folder_id, title, updated_at').maybeSingle();
+    if (error || !data) { console.error(error); return toast(describeError(error)); }
+    announce({ ...data, from: cur ? { classId: cur.class_id, folderId: cur.folder_id } : null });
+    const c = window.eigenClasses.findClass(classId);
+    const f = folderId && c?.folders.find(x => x.id === folderId);
+    toast(`Moved “${data.title}” to ${f ? f.name : c?.name ?? 'the course'}.`);
   }
 
   async function remove(id) {
@@ -54,7 +96,8 @@
     if (!ok) return;
     const { error } = await db().from('notes').delete().eq('id', id);
     if (error) return toast(describeError(error));
-    announce(n);
+    announce({ id, class_id: n.class_id, folder_id: n.folder_id });
+    if (window.eigenViewer.isOpen('note:' + id)) window.eigenViewer.close();
     if (id === noteId) {
       clearTimeout(saveTimer);
       dirty = false;
@@ -121,7 +164,7 @@
     const { error } = await db().from('notes').update(patch).eq('id', n.id);
     if (error) { console.error(error); dirty = true; statusEl.textContent = 'Not saved'; return toast(describeError(error)); }
     Object.assign(n, patch);
-    announce(n);
+    announce({ ...n });
     if (n === note) render();
   }
 
@@ -156,9 +199,54 @@
     if ((next?.id || null) === (user?.id || null)) return;
     user = next;
     status = 'idle';
+    all = [];
+    if (user && db()) loadAll(); else document.dispatchEvent(new CustomEvent('eigen:notes-changed', { detail: {} }));
     sync();
   });
 
-  window.eigenNotes = { list, create, remove };
+  // ---------- Sidebar ----------
+  function sidebarRows(classId, folderId = null) {
+    return all.filter(n => n.class_id === classId && n.folder_id === folderId).map(n => {
+      const li = document.createElement('li');
+      li.className = 'side-note';
+      li.dataset.noteId = n.id;
+      li.innerHTML = `<button class="row file-row" type="button" draggable="true" title="Open note"><svg><use href="#i-pencil"/></svg><span class="file-name"></span></button>`;
+      li.querySelector('.file-name').textContent = n.title;
+      return li;
+    });
+  }
+  const sidebar = document.querySelector('.sidebar');
+  const openInPanel = id => { const n = all.find(x => x.id === id); if (n) window.eigenViewer.preview({ fileId: 'note:' + id, fileName: n.title }); };
+  sidebar.addEventListener('click', e => {
+    const item = e.target.closest('.side-note[data-note-id]');
+    if (item) openInPanel(item.dataset.noteId);
+  });
+  sidebar.addEventListener('dragstart', e => {
+    const item = e.target.closest?.('.side-note[data-note-id]');
+    if (item) window.eigenUI.drag.start(e, { type: 'note', id: item.dataset.noteId });
+  });
+  sidebar.addEventListener('contextmenu', e => {
+    const item = e.target.closest('.side-note[data-note-id]');
+    if (!item) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const id = item.dataset.noteId;
+    const r = item.getBoundingClientRect();
+    window.eigenUI.openMenu(e.clientX || r.left, e.clientY || r.bottom, [
+      { label: 'Open', icon: 'pencil', run: () => openInPanel(id) },
+      { label: 'Open full page', icon: 'external', run: () => { location.hash = '#note/' + id; } },
+      '-',
+      { label: 'Delete note', icon: 'trash', danger: true, run: () => remove(id) },
+    ]);
+  }, true);
+
+  window.eigenNotes = {
+    sidebarRows,
+    list, create, save: saveNote, move, remove,
+    find: id => all.find(n => n.id === id),
+    // Notes directly in a folder, or on the course itself (folderId null), for the sidebar.
+    under: (classId, folderId = null) => all.filter(n => n.class_id === classId && n.folder_id === folderId),
+  };
+  if (user && db()) loadAll();
   sync();
 })();

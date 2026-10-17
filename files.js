@@ -190,7 +190,7 @@
     const row = (f, uploading) => {
       const li = el(`
         <li class="course-file" ${uploading ? '' : `data-file-id="${f.id}"`}>
-          <button class="row file-row ${uploading ? 'uploading' : ''}" type="button" title="${uploading ? 'Uploading…' : 'Open'}">${icon('file')}<span class="file-name"></span><span class="folder-size"></span></button>
+          <button class="row file-row ${uploading ? 'uploading' : ''}" type="button" ${uploading ? '' : 'draggable="true"'} title="${uploading ? 'Uploading…' : 'Open'}">${icon('file')}<span class="file-name"></span><span class="folder-size"></span></button>
         </li>`);
       li.querySelector('.file-name').textContent = f.name;
       li.querySelector('.folder-size').textContent = uploading ? 'Uploading…' : formatSize(Number(f.size));
@@ -359,7 +359,7 @@
       const ul = el(`<ul class="file-list"></ul>`);
       for (const n of written) {
         const li = el(`
-          <li class="file-item note-item" data-note-id="${n.id}">
+          <li class="file-item note-item" data-note-id="${n.id}" draggable="true">
             <a class="file-open" href="#note/${n.id}">
               <span class="file-badge note-badge">${icon('pencil')}</span>
               <span class="file-text"><span class="file-name"></span><span class="file-meta"></span></span>
@@ -513,23 +513,24 @@
   });
 
   // Drag and drop: files from the desktop upload to the side they're dropped on (Context if dropped
-  // elsewhere on the page); files already here can be dragged to the other side.
+  // elsewhere on the page). Files and notes dragged from anywhere (this page, the sidebar, the
+  // library) move into this folder; a file dropped on the other side here switches sides.
+  const { drag } = window.eigenUI;
   const types = e => [...(e.dataTransfer?.types || [])];
-  const canDrop = e => !view.hidden && user && status === 'ready' && (types(e).includes('Files') || types(e).includes('application/x-eigen-file'));
+  const canDrop = e => !view.hidden && user && status === 'ready' && (types(e).includes('Files') || drag.has(e));
   const paneAt = e => e.target.closest?.('.folder-pane');
   const clearPanes = () => content.querySelectorAll('.folder-pane.drop-target').forEach(p => p.classList.remove('drop-target'));
   content.addEventListener('dragstart', e => {
-    const li = e.target.closest('.file-item[data-file-id]');
+    const li = e.target.closest('.file-item[data-file-id], .file-item[data-note-id]');
     if (!li) return;
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('application/x-eigen-file', li.dataset.fileId);
+    drag.start(e, li.dataset.fileId ? { type: 'file', id: li.dataset.fileId } : { type: 'note', id: li.dataset.noteId });
     requestAnimationFrame(() => li.classList.add('dragging'));
   });
   content.addEventListener('dragend', () => { clearPanes(); content.querySelectorAll('.dragging').forEach(n => n.classList.remove('dragging')); });
   view.addEventListener('dragover', e => {
     if (!canDrop(e)) return;
     e.preventDefault();
-    const target = paneAt(e) ?? (types(e).includes('Files') ? content.querySelector('.folder-pane[data-kind="context"]') : null);
+    const target = paneAt(e) ?? content.querySelector(`.folder-pane[data-kind="${drag.has(e) ? 'notes' : 'context'}"]`);
     clearPanes();
     target?.classList.add('drop-target');
   });
@@ -539,14 +540,45 @@
     if (!canDrop(e)) return;
     e.preventDefault();
     const kind = paneAt(e)?.dataset.kind;
-    const moved = e.dataTransfer.getData('application/x-eigen-file');
-    if (moved) { if (kind) setKind(moved, kind); return; }
-    uploadFiles([...e.dataTransfer.files], { kind: kind ?? 'context' });
+    const item = drag.read(e);
+    if (!item) return uploadFiles([...e.dataTransfer.files], { kind: kind ?? 'context' });
+    const found = window.eigenClasses.findFolder(folderId);
+    if (item.type === 'note') return found && window.eigenNotes.move(item.id, { classId: found.c.id, folderId });
+    if (files.some(f => f.id === item.id)) return kind && setKind(item.id, kind);
+    moveFile(item.id, { folderId }, kind);
   });
 
-  // A note was written, renamed or deleted: refresh the list if it's in this folder.
+  // Moves a file into another folder (folderId) or onto a course (classId), optionally to a side.
+  async function moveFile(id, { folderId: toFolder = null, classId: toClass = null }, kind = null) {
+    const patch = { folder_id: toFolder, class_id: toFolder ? null : toClass, ...(kind ? { kind } : {}) };
+    const { data, error } = await db().from('files').update(patch).eq('id', id).select('id, name').maybeSingle();
+    if (error || !data) { console.error(error); return toast(describeError(error)); }
+    const where = toFolder ? window.eigenClasses.findFolder(toFolder)?.f.name : window.eigenClasses.findClass(toClass)?.name;
+    toast(`Moved “${data.name}” to ${where ?? 'the course'}.`);
+    // Refresh whatever shows files: this folder page, the course files in the sidebar, sizes, the library.
+    if (folderId && (files.some(f => f.id === id) || toFolder === folderId)) await reloadFolder();
+    await loadCourseFiles();
+    announce();
+  }
+
+  // Re-reads the open folder's files without showing "Loading…".
+  async function reloadFolder() {
+    const target = folderId;
+    const { data, error } = await db().from('files').select('id, name, size, mime_type, storage_path, kind, created_at, file_texts(status)')
+      .eq('folder_id', target).eq('uploaded', true);
+    if (error || target !== folderId) return;
+    files = data.map(f => {
+      const t = Array.isArray(f.file_texts) ? f.file_texts[0] : f.file_texts;
+      return { ...f, createdAt: Date.parse(f.created_at), aiStatus: t?.status ?? null };
+    }).sort((a, b) => b.createdAt - a.createdAt);
+    render();
+  }
+
+  // A note was written, renamed, moved or deleted: refresh the list if it's (or was) in this folder.
   document.addEventListener('eigen:notes-changed', async e => {
-    if (!folderId || e.detail.folderId !== folderId || status !== 'ready') return;
+    const d = e.detail;
+    const here = d.folderId === folderId || d.from?.folderId === folderId || !d.id;
+    if (!folderId || !here || status !== 'ready') return;
     const target = folderId;
     const written = await window.eigenNotes.list({ folderId: target });
     if (target !== folderId) return;
@@ -559,6 +591,10 @@
   sidebar.addEventListener('click', e => {
     const item = e.target.closest('.course-file[data-file-id]');
     if (item && !e.target.closest('.inline-input')) previewFile(item.dataset.fileId);
+  });
+  sidebar.addEventListener('dragstart', e => {
+    const item = e.target.closest?.('.course-file[data-file-id]');
+    if (item) drag.start(e, { type: 'file', id: item.dataset.fileId });
   });
   sidebar.addEventListener('contextmenu', e => {
     const item = e.target.closest('.course-file[data-file-id]');
@@ -582,6 +618,7 @@
     openRow,
     canUpload: () => !!user && !!db(),
     courseRows,
+    move: moveFile,
     courseFiles: classId => courseFiles.filter(f => f.class_id === classId),
   };
 

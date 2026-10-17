@@ -167,7 +167,7 @@
       return;
     }
     if (token !== renderToken) return;
-    if (entry.note) { titleEl.textContent = entry.note.title; titleEl.title = entry.note.title; }
+    if (entry.note) return renderNoteEditor(entry.note, c);
     if (entry.media || (!entry.pdf && !entry.pages.some(t => t.trim()) && c.preview)) {
       // Nothing to page through: an image, a video, or a file Eigen has no text for.
       prevBtn.hidden = nextBtn.hidden = true;
@@ -229,6 +229,53 @@
       }
       if (i === current.focus) (sections[i].querySelector('.hl, mark') || sections[i]).scrollIntoView({ block: 'center' });
     }
+  }
+
+  // A note written in Eigen is edited right in the panel; it saves as you type.
+  let flushNote = () => {};
+  function renderNoteEditor(note, c) {
+    const place = () => {
+      const meta = window.eigenNotes.find(note.id);
+      const course = window.eigenClasses.findClass(meta?.class_id);
+      const folder = meta?.folder_id && course?.folders.find(f => f.id === meta.folder_id);
+      return [course?.name, folder?.name].filter(Boolean).join(' / ') || 'Note';
+    };
+    titleEl.textContent = note.title;
+    titleEl.title = note.title;
+    pageEl.textContent = place();
+    prevBtn.hidden = nextBtn.hidden = true;
+    noteEl.hidden = true;
+    const box = el(`
+      <div class="panel-note">
+        <input class="panel-note-title" maxlength="200" placeholder="Untitled note" aria-label="Note title" spellcheck="false">
+        <textarea class="panel-note-body" placeholder="Start writing…" aria-label="Note"></textarea>
+        <p class="panel-note-status"></p>
+      </div>`);
+    const [title, text, status] = [box.querySelector('input'), box.querySelector('textarea'), box.querySelector('p')];
+    title.value = note.title;
+    text.value = note.body;
+    status.textContent = 'Saved';
+    body.replaceChildren(box);
+    let timer = 0, pending = null;
+    const save = async () => {
+      clearTimeout(timer);
+      if (!pending) return;
+      const patch = pending;
+      pending = null;
+      const ok = await window.eigenNotes.save(note.id, patch);
+      if (status.isConnected) status.textContent = ok ? 'Saved' : 'Not saved';
+    };
+    flushNote = save;
+    const edited = patch => {
+      pending = { ...pending, ...patch };
+      status.textContent = 'Saving…';
+      clearTimeout(timer);
+      timer = setTimeout(save, 600);
+    };
+    title.addEventListener('input', () => { titleEl.textContent = title.value || 'Untitled note'; edited({ title: title.value }); });
+    title.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); text.focus(); } });
+    text.addEventListener('input', () => edited({ body: text.value }));
+    if (c.focusTitle) requestAnimationFrame(() => { title.focus(); title.select(); });
   }
 
   function showNote(text) { noteEl.textContent = noteEl.hidden ? text : `${noteEl.textContent} ${text}`; noteEl.hidden = false; }
@@ -320,24 +367,27 @@
 
   // ---------- Opening & closing ----------
   const asItem = cite => ({
-    n: cite.n, fileId: cite.fileId, fileName: cite.fileName, page: cite.page || 1, preview: !!cite.preview,
+    n: cite.n, fileId: cite.fileId, fileName: cite.fileName, page: cite.page || 1, preview: !!cite.preview, focusTitle: !!cite.focusTitle,
     quote: cite.quote || '', quotes: cite.quotes || [], claim: cite.claim || '', approximate: !!cite.approximate,
   });
   // preview(file) shows a whole file (or a note, fileId 'note:<id>') from its first page, without highlights.
-  const preview = ({ fileId, fileName }) => open({ fileId, fileName, page: 1, preview: true });
+  const preview = ({ fileId, fileName, focusTitle = false }) => open({ fileId, fileName, page: 1, preview: true, focusTitle });
   // open(cite) shows one page; open([cites], focusIndex) shows several cited pages together.
   function open(cites, focus = 0) {
+    flushNote(); // save a note being typed in the panel before showing something else
+    flushNote = () => {};
     const items = (Array.isArray(cites) ? cites : [cites]).map(asItem);
     current = { items, focus: Math.max(0, Math.min(focus, items.length - 1)), page: items[0].page };
     const note = items.length === 1 && isNote(items[0].fileId);
-    openBtn.title = note ? 'Edit note' : 'Open in a new tab';
+    openBtn.title = note ? 'Open full page' : 'Open in a new tab';
     openBtn.setAttribute('aria-label', openBtn.title);
-    openBtn.querySelector('use').setAttribute('href', note ? '#i-pencil' : '#i-external');
     panel.hidden = false;
     main.classList.add('with-viewer');
     render();
   }
   function close() {
+    flushNote();
+    flushNote = () => {};
     panel.hidden = true;
     main.classList.remove('with-viewer');
     current = null;
@@ -349,7 +399,7 @@
   $('viewer-close').addEventListener('click', close);
   openBtn.addEventListener('click', async () => {
     if (!current) return;
-    if (current.items.length === 1 && isNote(current.items[0].fileId)) { location.hash = '#note/' + current.items[0].fileId.slice(5); return; }
+    if (current.items.length === 1 && isNote(current.items[0].fileId)) { await flushNote(); location.hash = '#note/' + current.items[0].fileId.slice(5); return; }
     const win = window.open('', '_blank');
     try {
       const item = current.items.length > 1 ? current.items[current.focus] : current.items[0];
@@ -364,7 +414,7 @@
   // Going to another page closes the viewer; a resize re-fits the page.
   window.addEventListener('hashchange', close);
   let resizeTimer;
-  window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (current) render(); }, 200); });
+  window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (current && !(current.items.length === 1 && isNote(current.items[0].fileId))) render(); }, 200); });
   // Files can change while the viewer is open.
   document.addEventListener('eigen:files-changed', () => fileCache.clear());
 

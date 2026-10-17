@@ -149,7 +149,7 @@
     const BADGE = { context: 'Context', notes: 'Notes & docs', course: 'Course file', folder: 'Folder' };
     const row = (it, nested) => {
       const li = el(`
-        <li class="file-item ${nested ? 'nested' : ''}">
+        <li class="file-item ${nested ? 'nested' : ''}" draggable="true">
           <button class="file-open" type="button">
             <span class="file-badge"></span>
             <span class="file-text"><span class="file-name"></span><span class="file-meta"></span></span>
@@ -162,6 +162,12 @@
       li.querySelector('.file-name').textContent = it.name;
       li.querySelector('.file-meta').textContent = [nested ? null : it.where, it.meta, formatDate(it.time)].filter(Boolean).join(' · ');
       li.querySelector('.kind-tag').textContent = BADGE[it.kind];
+      // Drag a file or note onto a folder (here or in the sidebar) to move it.
+      li.addEventListener('dragstart', e => {
+        window.eigenUI.drag.start(e, it.type === 'note' ? { type: 'note', id: it.href.slice(6) } : { type: 'file', id: it.file.id });
+        requestAnimationFrame(() => li.classList.add('dragging'));
+      });
+      li.addEventListener('dragend', () => li.classList.remove('dragging'));
       // Files and notes preview in the side panel.
       li.querySelector('.file-open').addEventListener('click', () => {
         if (it.type === 'note') window.eigenViewer.preview({ fileId: 'note:' + it.href.slice(6), fileName: it.name });
@@ -186,14 +192,31 @@
       li.querySelector('.file-name').textContent = f.name;
       li.querySelector('.file-meta').textContent = (inside.length < total ? `${inside.length} of ${total} items match` : `${total} item${total === 1 ? '' : 's'}`) + ` · ${formatDate(f.time)}`;
       li.querySelector('.file-open').addEventListener('click', () => { openFolders.set(f.folderId, !open); render(); });
+      dropTarget(li, () => ({ classId, folderId: f.folderId }));
       ul.append(li);
       if (open) {
         if (inside.length) ul.append(...inside.map(it => row(it, true)));
         else ul.append(el(`<li class="file-item nested lib-empty">Empty folder</li>`));
       }
     }
-    ul.append(...loose.map(it => row(it, false)));
+    const looseRows = loose.map(it => row(it, false));
+    looseRows.forEach(li => dropTarget(li, () => ({ classId, folderId: null }))); // dropping among course files moves onto the course
+    ul.append(...looseRows);
     content.replaceChildren(ul);
+  }
+
+  // A row that files and notes can be dropped on.
+  function dropTarget(li, where) {
+    const { drag } = window.eigenUI;
+    li.addEventListener('dragover', e => { if (!drag.has(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; li.classList.add('drop-into'); });
+    li.addEventListener('dragleave', e => { if (!li.contains(e.relatedTarget)) li.classList.remove('drop-into'); });
+    li.addEventListener('drop', e => {
+      li.classList.remove('drop-into');
+      if (!drag.has(e)) return;
+      e.preventDefault();
+      const { classId: c, folderId } = where();
+      drag.drop(drag.read(e), c, folderId);
+    });
   }
 
   // ---------- Data ----------

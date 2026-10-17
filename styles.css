@@ -1153,3 +1153,11 @@ a.file-open { color: inherit; text-decoration: none; }
 .library-list .file-item.nested .file-open { padding-left: 58px; }
 .library-list .file-item.nested { background: #131313; }
 .library-list .lib-empty { padding: 12px 16px 12px 58px; font-size: 13px; color: var(--text-faint); }
+/* Note editing in the side panel */
+.panel-note { display: flex; flex-direction: column; gap: 10px; height: 100%; }
+.panel-note-title { width: 100%; padding: 0; background: none; border: 0; outline: none; color: var(--text); font: 400 30px/1.2 "Instrument Serif", Georgia, serif; }
+.panel-note-body { flex: 1; width: 100%; min-height: 300px; padding: 0; background: none; border: 0; outline: none; resize: none; color: var(--text); font: inherit; font-size: 15px; line-height: 1.7; }
+.panel-note-title::placeholder, .panel-note-body::placeholder { color: var(--text-faint); }
+.panel-note-status { font-size: 12px; color: var(--text-faint); }
+.library-list .file-item.drop-into { background: var(--hover); box-shadow: inset 0 0 0 1px #555; }
+.side-note .file-row svg { color: #c9b6f2; }

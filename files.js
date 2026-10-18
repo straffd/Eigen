@@ -109,16 +109,24 @@
     await db().from('files').delete().in('id', data.map(r => r.id));
   }
 
+  // Documents you write and edit yourself (Word, text, Markdown…) go on the Notes & docs side; course
+  // material (PDFs, slides, spreadsheets, everything else) goes on the Context side.
+  const EDITABLE = /\.(docx?|docm|dotx?|odt|ott|rtf|txt|md|markdown|tex|pages)$/i;
+  const EDITABLE_TYPES = /^(text\/(plain|markdown|rtf)|application\/(msword|rtf|vnd\.openxmlformats-officedocument\.wordprocessingml\..*|vnd\.oasis\.opendocument\.text.*))$/;
+  const kindFor = file => (EDITABLE.test(file.name) || EDITABLE_TYPES.test(file.type || '') ? 'notes' : 'context');
+
   // Uploads into the open folder, or (dropped in the sidebar) into any folder or straight onto a course.
-  async function uploadFiles(list, { folderId: targetFolder = folderId, classId: targetClass = null, kind = 'context' } = {}) {
+  // kind 'auto' picks the side from each file's type; a side's own Upload button passes that side.
+  async function uploadFiles(list, { folderId: targetFolder = folderId, classId: targetClass = null, kind: side = 'auto' } = {}) {
     if (targetClass) targetFolder = null;
     if (!user || (!targetFolder && !targetClass)) return;
     if (targetFolder && targetFolder === folderId ? status !== 'ready' : !await refreshUsage()) return;
-    let done = 0;
+    let done = 0, toNotes = 0;
     for (const file of list) {
       if (file.size > MAX_FILE) { toast(`${file.name} is over ${formatSize(MAX_FILE)}.`); continue; }
       if (usage + file.size > QUOTA) { toast(describeError({ message: 'storage_quota' })); break; }
 
+      const kind = side === 'auto' ? kindFor(file) : side;
       const id = crypto.randomUUID();
       const path = `${user.id}/${id}`;
       const pending = { id, name: file.name, size: file.size, folderId: targetFolder, classId: targetClass, kind };
@@ -145,6 +153,7 @@
         if (targetClass) courseFiles.unshift({ ...row, class_id: targetClass });
         else if (folderId === targetFolder) files.unshift(row);
         done++;
+        if (kind === 'notes' && !targetClass) toNotes++;
         announce();
       } catch (err) {
         console.error(err);
@@ -165,7 +174,8 @@
     if (done && targetClass) toast(`Added ${n} to ${window.eigenClasses.findClass(targetClass)?.name ?? 'the course'}.`);
     else if (done && targetFolder !== folderId) {
       const where = window.eigenClasses.findFolder(targetFolder);
-      toast(`Uploaded ${n} to ${where?.f.name ?? 'the folder'}.`,
+      const sides = toNotes === done ? ' (Notes & docs)' : toNotes ? ` (${toNotes} in Notes & docs)` : '';
+      toast(`Uploaded ${n} to ${where?.f.name ?? 'the folder'}${sides}.`,
         { label: 'Open', run: () => { location.hash = '#folder/' + targetFolder; } });
     }
   }
@@ -530,9 +540,10 @@
   view.addEventListener('dragover', e => {
     if (!canDrop(e)) return;
     e.preventDefault();
-    const target = paneAt(e) ?? content.querySelector(`.folder-pane[data-kind="${drag.has(e) ? 'notes' : 'context'}"]`);
+    // Files from the desktop are sorted by type, so the whole page lights up; dragged items go where dropped.
+    const targets = drag.has(e) ? [paneAt(e) ?? content.querySelector('.folder-pane[data-kind="notes"]')] : [...content.querySelectorAll('.folder-pane')];
     clearPanes();
-    target?.classList.add('drop-target');
+    targets.forEach(t => t?.classList.add('drop-target'));
   });
   view.addEventListener('dragleave', e => { if (!view.contains(e.relatedTarget)) clearPanes(); });
   view.addEventListener('drop', e => {
@@ -541,7 +552,7 @@
     e.preventDefault();
     const kind = paneAt(e)?.dataset.kind;
     const item = drag.read(e);
-    if (!item) return uploadFiles([...e.dataTransfer.files], { kind: kind ?? 'context' });
+    if (!item) return uploadFiles([...e.dataTransfer.files], { kind: 'auto' }); // the file type picks the side
     const found = window.eigenClasses.findFolder(folderId);
     if (item.type === 'note') return found && window.eigenNotes.move(item.id, { classId: found.c.id, folderId });
     if (files.some(f => f.id === item.id)) return kind && setKind(item.id, kind);

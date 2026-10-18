@@ -264,7 +264,7 @@
         if (token !== renderToken) return;
         target.replaceChildren(Object.assign(el(`<p class="viewer-status"></p>`), { textContent: err.message }));
       }
-      if (i === current.focus) (sections[i].querySelector('.hl, mark') || sections[i]).scrollIntoView({ block: 'center' });
+      if (i === current.focus) reveal(sections[i].querySelector('.hl, mark') || sections[i]);
     }
   }
 
@@ -313,6 +313,19 @@
     title.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); text.focus(); } });
     text.addEventListener('input', () => edited({ body: text.value }));
     if (c.focusTitle) requestAnimationFrame(() => { title.focus(); title.select(); });
+  }
+
+  // Scrolls the panel (and only the panel) so `target` is in the middle of it. scrollIntoView would also
+  // scroll the page behind the panel when the passage is near the bottom of a page, pushing the chat up.
+  function reveal(target, smooth = false) {
+    const box = body.getBoundingClientRect(), r = target.getBoundingClientRect();
+    const top = body.scrollTop + (r.top - box.top) - (body.clientHeight - Math.min(r.height, body.clientHeight)) / 2;
+    body.scrollTo({ top: Math.max(0, top), behavior: smooth ? 'smooth' : 'auto' });
+    unscrollPage();
+  }
+  // The page behind the panel never scrolls in chat view; undo it if anything did.
+  function unscrollPage() {
+    for (const el of [document.scrollingElement, document.getElementById('app'), main]) if (el && el.scrollTop) el.scrollTop = 0;
   }
 
   function showNote(text) { noteEl.textContent = noteEl.hidden ? text : `${noteEl.textContent} ${text}`; noteEl.hidden = false; }
@@ -369,7 +382,7 @@
       layer.append(box);
       first ??= box;
     }
-    if (scroll) first?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    if (scroll && first) reveal(first, true);
     return first ? kind : 'none';
   }
 
@@ -398,7 +411,7 @@
       pos = b;
     }
     box.append(document.createTextNode(text.slice(pos)));
-    if (scroll) box.querySelector('mark')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    if (scroll && box.querySelector('mark')) reveal(box.querySelector('mark'), true);
     return highlightHere ? (sorted.length ? kind : 'none') : null;
   }
 
@@ -421,6 +434,7 @@
     panel.hidden = false;
     main.classList.add('with-viewer');
     render();
+    requestAnimationFrame(unscrollPage);
   }
   function close() {
     flushNote();

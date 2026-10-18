@@ -59,7 +59,7 @@ svg {
 svg.sm { width: 15px; height: 15px; }
 svg.lg { width: 24px; height: 24px; stroke-width: 1.4; }
 
-.app { display: flex; height: 100vh; overflow: hidden; }
+.app { display: flex; height: 100vh; overflow: clip; }
 
 /* ---------- Sidebar ---------- */
 .sidebar {
@@ -865,7 +865,7 @@ svg.lg { width: 24px; height: 24px; stroke-width: 1.4; }
 @keyframes pulse { 50% { opacity: .3; } }
 
 /* ---------- Chat page ---------- */
-.main.chat-mode { overflow: hidden; }
+.main.chat-mode { overflow: clip; } /* clip, not hidden: nothing (not even code) can scroll the chat page */
 .chat-view {
   display: flex;
   flex-direction: column;

@@ -50,9 +50,13 @@
       .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
       .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
       .replace(/((?:\[\[\d+(?:,\d+)*\]\])+)/g, m => `<span class="cite-refs">${[...m.matchAll(/\[\[(\d+(?:,\d+)*)\]\]/g)]
-        .map(x => x[1].includes(',')
-          ? `<button type="button" class="cite-ref cite-group" data-ns="${x[1]}">${x[1].replace(/,/g, ', ')}</button>`
-          : `<button type="button" class="cite-ref" data-n="${x[1]}">${x[1]}</button>`).join('')}</span>`);
+        .map(x => {
+          // Which time this number appears in the answer, so a click shows only what this sentence cited.
+          const uses = x[1].split(',').map(n => { const i = useCount.get(n) ?? 0; useCount.set(n, i + 1); return i; }).join(',');
+          return x[1].includes(',')
+            ? `<button type="button" class="cite-ref cite-group" data-ns="${x[1]}" data-uses="${uses}">${x[1].replace(/,/g, ', ')}</button>`
+            : `<button type="button" class="cite-ref" data-n="${x[1]}" data-use="${uses}">${x[1]}</button>`;
+        }).join('')}</span>`);
   }
   // Maths written in LaTeX ($…$ or \(…\) inline, $$…$$ or \[…\] on its own) is drawn with KaTeX.
   // It's taken out before the Markdown pass (so * and _ inside it stay maths) and put back after.
@@ -73,7 +77,9 @@
     catch { return `<code>${esc(tex)}</code>`; }
   }
 
+  let useCount = new Map(); // number -> times seen so far in the answer being drawn
   function markdown(text) {
+    useCount = new Map();
     // Older answers may contain raw [[src:…]] markers the model wrote in an unexpected format: hide them.
     text = text.replace(/\[\[?\s*src\s*:[^\]]*\]\]?/gi, '').replace(/ +([.,;:!?])/g, '$1');
     const math = [];
@@ -349,6 +355,7 @@
   const normalizeCite = c => ({
     n: c.n, fileId: c.fileId, fileName: c.fileName, folderName: c.folderName, page: c.page,
     quote: c.quote, quotes: c.quotes ?? (c.quote ? [c.quote] : []), hints: c.hints ?? [], claim: c.claim || '', approximate: !!c.approximate,
+    uses: Array.isArray(c.uses) ? c.uses : undefined,
   });
 
   async function send() {
@@ -495,6 +502,11 @@
       const msgEl = ref.closest('.msg');
       const msg = messages.find(m => m.id && m.id === msgEl.dataset.id) ?? messages[[...log.querySelectorAll('.msg')].indexOf(msgEl)];
       const find = n => msg?.citations?.find(c => c.n === n);
+      // Just what one marker cited (older answers don't record this: then everything for that page).
+      const only = (c, i) => {
+        const use = c?.uses?.[i];
+        return use ? { ...c, quote: use.quotes[0] || '', quotes: use.quotes, hints: use.hints || [], claim: use.claim, approximate: !use.quotes.length } : c;
+      };
       // Notes written in Eigen open in the note editor rather than the page viewer.
       const isNote = c => c?.fileId?.startsWith('note:');
       const openNote = c => { location.hash = '#note/' + c.fileId.slice(5); };
@@ -505,8 +517,9 @@
       // A page-group button opens every page behind the explanation, side by side.
       if (ref.dataset.ns) {
         const ns = ref.dataset.ns.split(',').map(Number);
+        const uses = (ref.dataset.uses || '').split(',').map(Number);
         ns.forEach(flash);
-        const all = ns.map(find).filter(Boolean);
+        const all = ns.map((n, i) => only(find(n), uses[i])).filter(Boolean);
         const group = all.filter(c => !isNote(c));
         if (group.length > 1) window.eigenViewer.open(group, 0);
         else if (group.length) window.eigenViewer.open(group[0]);
@@ -514,7 +527,7 @@
         return;
       }
       const n = Number(ref.dataset.n ?? ref.closest('li')?.dataset.n);
-      const cite = find(n);
+      const cite = ref.dataset.use != null ? only(find(n), Number(ref.dataset.use)) : find(n); // a Sources entry shows the whole page's
       flash(n);
       if (isNote(cite)) openNote(cite);
       else if (cite) window.eigenViewer.open(cite);

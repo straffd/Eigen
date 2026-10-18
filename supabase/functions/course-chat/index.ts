@@ -52,7 +52,10 @@ export function noteSections(body: string, size = 2500): string[] {
 
 export interface HistoryMessage { role: "user" | "assistant"; content: string }
 
-export interface Source { fileId: string; fileName: string; folderName: string; page: number | null; quote: string; quotes?: string[]; claim?: string }
+export interface Source {
+  fileId: string; fileName: string; folderName: string; page: number | null; quote: string; quotes?: string[]; claim?: string;
+  uses?: { quotes: string[]; claim: string }[]; // per marker in the answer, in order: what that sentence cited
+}
 
 export interface Deps {
   userId: string;
@@ -200,6 +203,9 @@ export const stripMarkers = (s: string) => s.replace(/\[\[\d+(?:,\d+)*\]\]/g, ""
 
 // The sentence just before a citation: lets the viewer find the passage if the quote can't be located.
 export function lastSentence(text: string): string {
+  // Only what was said since the previous reference, if that's a real phrase.
+  const after = text.slice(text.lastIndexOf("]]") + 1).replace(/^[\]\s.,;:]+/, "");
+  if (text.includes("]]") && after.trim().length >= 20) text = after;
   const t = stripMarkers(text).replace(/[*_`#>]/g, "").trimEnd();
   const cut = Math.max(t.lastIndexOf(". "), t.lastIndexOf("! "), t.lastIndexOf("? "), t.lastIndexOf("\n"));
   return t.slice(cut + 1).replace(/^[\s\-•\d.)]+/, "").trim().slice(-300);
@@ -269,13 +275,20 @@ export async function handleRequest(req: Request, makeDeps: (req: Request) => Pr
       const citations: (Source & { n: number })[] = [];
       const citeKey = new Map<string, number>();
       let answer = "";
-      let pending: number[] = [];   // citation numbers for the current text block, emitted when it ends
+      // Citations for the current text block, emitted as markers when it ends. Each marker remembers its own
+      // quotes (a page cited from several sentences shares one number but not its highlights).
+      let pending = new Map<number, { quotes: string[]; claim: string }>();
       const flushCites = () => {
-        if (!pending.length) return;
-        const marks = pending.map(n => `[[${n}]]`).join("");
+        if (!pending.size) return;
+        for (const [n, use] of pending) {
+          const c = citations[n - 1];
+          c.uses = [...(c.uses ?? []), use];
+          send({ t: "cite", n, source: { ...c } });
+        }
+        const marks = [...pending.keys()].map(n => `[[${n}]]`).join("");
         answer += marks;
         send({ t: "text", text: marks });
-        pending = [];
+        pending = new Map();
       };
       try {
         const stream = deps.anthropic.beta.messages.stream({
@@ -312,7 +325,9 @@ export async function handleRequest(req: Request, makeDeps: (req: Request) => Pr
                   send({ t: "cite", n, source: { ...c } });
                 }
               }
-              if (!pending.includes(n)) pending.push(n);
+              const use = pending.get(n) ?? { quotes: [], claim: source.claim ?? "" };
+              if (source.quote && !use.quotes.includes(source.quote)) use.quotes.push(source.quote);
+              pending.set(n, use);
             }
           } else if (event.type === "content_block_stop") {
             flushCites();

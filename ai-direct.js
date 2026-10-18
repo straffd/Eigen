@@ -333,7 +333,7 @@
         keyToN.set(key, n);
         const source = {
           fileId: doc.material.fileId, fileName: doc.material.fileName, folderName: doc.material.folderName, page: p,
-          quote: verified[0] || '', quotes: verified, hints, claim, approximate: !verified.length,
+          quote: verified[0] || '', quotes: [...verified], hints: [...hints], claim, approximate: !verified.length,
         };
         citations.push({ ...source, n });
         onEvent({ t: 'cite', n, source });
@@ -348,7 +348,7 @@
           onEvent({ t: 'cite', n, source: { ...c } });
         }
       }
-      return { n, quotedHere };
+      return { n, quotedHere, verified, hints };
     }
 
     function handle(loc, quote, before) {
@@ -362,11 +362,20 @@
       const claim = lastSentence(context);
       // Pages the printed quotation comes from get their own number next to it; the pages behind
       // an explanation without a quotation share one button that opens them side by side.
-      const quoted = [], loose = [];
+      const quoted = [], loose = [], found = new Map();
       for (const { d, p } of refs) {
         const r = cite(d, p, fragments, claim, shown);
-        if (!r || quoted.includes(r.n) || loose.includes(r.n)) continue;
+        if (!r || found.has(r.n)) continue;
+        found.set(r.n, r);
         (r.quotedHere ? quoted : loose).push(r.n);
+      }
+      // Each marker remembers what this sentence cited, in the order the markers appear, so clicking
+      // it highlights only that (a page cited from several sentences shares a number, not highlights).
+      for (const n of [...quoted, ...loose]) {
+        const r = found.get(n), c = citations[n - 1];
+        const use = { quotes: r.quotedHere ? [shown] : [...r.verified], hints: [...r.hints], claim }; // copies: the page's own lists keep growing
+        c.uses = [...(c.uses || []), use];
+        onEvent({ t: 'cite', n, source: { ...c } });
       }
       return quoted.map(n => `[[${n}]]`).join('') + (loose.length ? `[[${loose.join(',')}]]` : '');
     }
@@ -568,13 +577,20 @@
     const citations = [];
     const citeKey = new Map();
     let answer = '';
-    let pending = [];
+    // Citations for the current text block, emitted as markers when it ends. Each marker remembers its own
+    // quotes (a page cited from several sentences shares one number but not its highlights).
+    let pending = new Map();
     const flushCites = () => {
-      if (!pending.length) return;
-      const marks = pending.map(n => `[[${n}]]`).join('');
+      if (!pending.size) return;
+      for (const [n, use] of pending) {
+        const c = citations[n - 1];
+        c.uses = [...(c.uses || []), use];
+        onEvent({ t: 'cite', n, source: { ...c } });
+      }
+      const marks = [...pending.keys()].map(n => `[[${n}]]`).join('');
       answer += marks;
       onEvent({ t: 'text', text: marks });
-      pending = [];
+      pending = new Map();
     };
     try {
       const stream = api.beta.messages.stream({
@@ -612,7 +628,9 @@
                 onEvent({ t: 'cite', n, source: { ...c } });
               }
             }
-            if (!pending.includes(n)) pending.push(n);
+            const use = pending.get(n) ?? { quotes: [], claim: source.claim || '' };
+            if (source.quote && !use.quotes.includes(source.quote)) use.quotes.push(source.quote);
+            pending.set(n, use);
           }
         } else if (event.type === 'content_block_stop') {
           flushCites();

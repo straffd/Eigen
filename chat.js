@@ -54,9 +54,30 @@
           ? `<button type="button" class="cite-ref cite-group" data-ns="${x[1]}">${x[1].replace(/,/g, ', ')}</button>`
           : `<button type="button" class="cite-ref" data-n="${x[1]}">${x[1]}</button>`).join('')}</span>`);
   }
+  // Maths written in LaTeX ($…$ or \(…\) inline, $$…$$ or \[…\] on its own) is drawn with KaTeX.
+  // It's taken out before the Markdown pass (so * and _ inside it stay maths) and put back after.
+  function takeMath(text, math) {
+    const keep = (tex, display) => `\u0000M${math.push({ tex, display }) - 1}\u0000`;
+    // Leave code alone: only look outside ``` blocks and `inline code`.
+    return text.split(/(```[\s\S]*?(?:```|$)|`[^`\n]*`)/).map((part, i) => (i % 2 ? part : part
+      .replace(/\$\$([\s\S]+?)\$\$/g, (_, t) => keep(t, true))
+      .replace(/\\\[([\s\S]+?)\\\]/g, (_, t) => keep(t, true))
+      .replace(/\\\((.+?)\\\)/g, (_, t) => keep(t, false))
+      // $x$ but not prices like "$5 and $10": no space just inside the $s, no digit right after.
+      .replace(/(^|[^\\$\w])\$(?!\s)([^$\n]+?)(?<!\s)\$(?![\d$])/g, (_, pre, t) => pre + keep(t, false))
+    )).join('');
+  }
+  function drawMath({ tex, display }) {
+    if (!window.katex) return `<code>${esc(tex)}</code>`; // KaTeX didn't load: show the source
+    try { return window.katex.renderToString(tex, { displayMode: display, throwOnError: false, output: 'htmlAndMathml' }); }
+    catch { return `<code>${esc(tex)}</code>`; }
+  }
+
   function markdown(text) {
     // Older answers may contain raw [[src:…]] markers the model wrote in an unexpected format: hide them.
     text = text.replace(/\[\[?\s*src\s*:[^\]]*\]\]?/gi, '').replace(/ +([.,;:!?])/g, '$1');
+    const math = [];
+    text = takeMath(text, math);
     const lines = esc(text).split('\n');
     const out = [];
     let list = null, para = [], code = null;
@@ -78,7 +99,7 @@
     }
     if (code) out.push(`<pre><code>${code.join('\n')}</code></pre>`);
     flushPara(); flushList();
-    return out.join('');
+    return out.join('').replace(/\u0000M(\d+)\u0000/g, (_, i) => drawMath(math[i]));
   }
 
   // ---------- Rendering ----------

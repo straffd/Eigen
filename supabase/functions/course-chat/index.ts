@@ -184,7 +184,7 @@ export function buildRequest(opts: {
   } else {
     lines.push("When you use the materials, mention the file name (and page or slide when helpful) in passing so the student can find it.");
   }
-  lines.push("", "Write clearly for a university student: short paragraphs, Markdown lists and **bold** for key terms, and code blocks or LaTeX-style plain text for formulas when useful.");
+  lines.push("", "Write clearly for a university student: short paragraphs, Markdown lists and **bold** for key terms, and code blocks when useful.", "Write maths in LaTeX: $...$ for inline maths and $$...$$ on its own line for equations shown on their own. Never use a bare $ for money (write 5 dollars or AUD 5).");
 
   const messages: Anthropic.Beta.BetaMessageParam[] = [];
   if (docBlocks.length) messages.push({ role: "user", content: [...docBlocks, { type: "text", text: "These are my course materials." }] });

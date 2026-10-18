@@ -493,12 +493,37 @@
     render();
   });
 
+  // When the chat gets narrower or wider (the side panel opening or closing, the sidebar collapsing)
+  // its text re-wraps; keep the line being read where it was instead of letting the chat jump.
+  let anchor = null; // { el, top }: an element in the log and its distance from the top of the log
+  const viewTop = () => log.getBoundingClientRect().top;
+  function setAnchor(el) { if (el?.isConnected) anchor = { el, top: el.getBoundingClientRect().top - viewTop() }; }
+  function anchorFirstVisible() {
+    const top = viewTop();
+    setAnchor([...log.children].find(m => m.getBoundingClientRect().bottom > top + 1));
+  }
+  let restoring = false;
+  // (Skip scrolls while a width change is still to be handled, so they don't move the anchor.)
+  log.addEventListener('scroll', () => { if (!restoring && log.clientWidth === lastWidth) anchorFirstVisible(); }, { passive: true });
+  let lastWidth = log.clientWidth;
+  new ResizeObserver(() => {
+    if (log.clientWidth === lastWidth) return;
+    lastWidth = log.clientWidth;
+    if (!anchor?.el.isConnected) return;
+    const drift = anchor.el.getBoundingClientRect().top - viewTop() - anchor.top;
+    if (Math.abs(drift) < 1) return;
+    restoring = true;
+    log.scrollTop += drift;
+    requestAnimationFrame(() => { restoring = false; });
+  }).observe(log);
+
   log.addEventListener('click', async e => {
     if (e.target.closest('[data-action="signin"]')) return $('signin-open').click();
     if (e.target.closest('[data-action="add-key"]')) return window.eigenSettings.open();
     // A citation number or a source opens the cited page beside the chat, with the passage highlighted.
     const ref = e.target.closest('.cite-ref, .source');
     if (ref) {
+      setAnchor(ref); // the panel is about to open: keep the clicked reference where it is
       const msgEl = ref.closest('.msg');
       const msg = messages.find(m => m.id && m.id === msgEl.dataset.id) ?? messages[[...log.querySelectorAll('.msg')].indexOf(msgEl)];
       const find = n => msg?.citations?.find(c => c.n === n);

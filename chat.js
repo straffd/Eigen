@@ -348,7 +348,7 @@
 
   const normalizeCite = c => ({
     n: c.n, fileId: c.fileId, fileName: c.fileName, folderName: c.folderName, page: c.page,
-    quote: c.quote, quotes: c.quotes ?? (c.quote ? [c.quote] : []), claim: c.claim || '', approximate: !!c.approximate,
+    quote: c.quote, quotes: c.quotes ?? (c.quote ? [c.quote] : []), hints: c.hints ?? [], claim: c.claim || '', approximate: !!c.approximate,
   });
 
   async function send() {

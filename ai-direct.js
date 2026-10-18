@@ -84,6 +84,9 @@
 
   // The sentence just before a citation marker: used to find the matching passage when there's no exact quote.
   function lastSentence(text) {
+    // Only what was said since the previous reference, if that's a real phrase.
+    const after = text.slice(text.lastIndexOf(']]') + 1).replace(/^[\]\s.,;:]+/, '');
+    if (text.includes(']]') && after.trim().length >= 20) text = after;
     const t = stripMarkers(text).replace(/[*_`#>]/g, '').trimEnd();
     const cut = Math.max(t.lastIndexOf('. '), t.lastIndexOf('! '), t.lastIndexOf('? '), t.lastIndexOf('\n'));
     return t.slice(cut + 1).replace(/^[\s\-•\d.)]+/, '').trim().slice(-300);
@@ -319,6 +322,9 @@
       // Keep only quote fragments that really are on that page.
       const pageText = norm(doc.material.pages[p - 1] || '');
       const verified = fragments.filter(f => f.length >= 8 && pageText.includes(norm(f)));
+      // Quotes that aren't word for word on the page are kept as hints: the viewer looks for the
+      // passage they were (loosely) copied from.
+      const hints = fragments.filter(f => f.length >= 12 && !verified.includes(f)).slice(0, 4);
       const quotedHere = !!shown && verified.includes(shown);
       const key = `${doc.material.fileId}:${p}`;
       let n = keyToN.get(key);
@@ -327,16 +333,18 @@
         keyToN.set(key, n);
         const source = {
           fileId: doc.material.fileId, fileName: doc.material.fileName, folderName: doc.material.folderName, page: p,
-          quote: verified[0] || '', quotes: verified, claim, approximate: !verified.length,
+          quote: verified[0] || '', quotes: verified, hints, claim, approximate: !verified.length,
         };
         citations.push({ ...source, n });
         onEvent({ t: 'cite', n, source });
       } else {
         const c = citations[n - 1];
         const added = verified.filter(f => !c.quotes.includes(f));
-        if (added.length) {
+        const newHints = hints.filter(f => !c.hints.includes(f));
+        if (newHints.length) c.hints.push(...newHints);
+        if (added.length || newHints.length) {
           c.quotes.push(...added);
-          if (!c.quote) { c.quote = c.quotes[0]; c.approximate = false; }
+          if (!c.quote && c.quotes.length) { c.quote = c.quotes[0]; c.approximate = false; }
           onEvent({ t: 'cite', n, source: { ...c } });
         }
       }

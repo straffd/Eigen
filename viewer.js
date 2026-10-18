@@ -44,16 +44,15 @@
     return null;
   }
 
-  // When there's no exact quote: the sentence on the page that best matches the sentence the citation
-  // was attached to (shared meaningful words, favouring shorter sentences). Returns [start, end) or null.
-  const STOP = new Set('the and for are but not you all any can had her was one our out has have this that with from they will would there their what about which when your into than then them these some such only also more most other been were each over very just like using used use its it\'s may might must shall should could does did done how why who whom where while because between both after before during under above below again further same few own too off per via is be as an at by of on or in to a'.split(' '));
+  // When there's no exact quote, look for the passage the citation most likely points at. This is
+  // only a guess, so it must be a confident one: an unrelated highlight is worse than none.
+  const STOP = new Set('the and for are but not you all any can had her was one our out has have this that with from they will would there their what about which when your into than then them these some such only also more most other been were each over very just like using used use its it\'s may might must shall should could does did done how why who whom where while because between both after before during under above below again further same few own too off per via is be as an at by of on or in to a means called known example examples following given gives make makes made way ways thing things part parts form'.split(' '));
   // Light stemming so "queue"/"queues", "sort"/"sorting" and "store"/"stored" match.
   const stem = w => w.replace(/'s$/, '').replace(/(ies)$/, 'y').replace(/(ing|ed|es|s)$/, '').replace(/(.)\1$/, '$1').replace(/e$/, '');
   const words = t => (t.toLowerCase().match(/[a-z0-9]+(?:'[a-z]+)?/g) || []).filter(w => w.length > 2 && !STOP.has(w)).map(stem);
-  function bestPassage(text, claim) {
-    const want = new Set(words(claim));
-    if (!want.size) return null;
-    // Split the page into sentences / lines, remembering where each one is.
+
+  // The page as sentences / lines, each with its keywords and where it is.
+  function segments(text) {
     const segs = [];
     const re = /[^.!?\n]+(?:[.!?]+|\n|$)/g;
     let m;
@@ -65,29 +64,67 @@
       const lead = m[0].length - m[0].trimStart().length;
       segs.push({ w, set: new Set(w), range: [m.index + lead, m.index + m[0].trimEnd().length] });
     }
-    if (!segs.length) return null;
-    // Words that appear in few sentences on this page say more about which one is meant.
-    const df = new Map();
-    for (const s of segs) for (const w of s.set) df.set(w, (df.get(w) || 0) + 1);
-    const idf = w => Math.log(1 + segs.length / df.get(w));
+    return segs;
+  }
+
+  // A quote the AI meant to copy from the page but didn't get word for word: the run of one to three
+  // consecutive sentences that contains most of its words.
+  function fuzzyQuote(text, quote) {
+    const want = [...new Set(words(quote))];
+    if (want.length < 3) return null;
+    const segs = segments(text);
     let best = null;
-    for (const s of segs) {
-      const shared = [...s.set].filter(w => want.has(w));
-      if (!shared.length) continue;
-      const score = shared.reduce((t, w) => t + idf(w), 0) / Math.sqrt(s.w.length);
-      // Two shared words, or one when the line is short and mostly about it (e.g. a slide bullet).
-      const enough = shared.length >= Math.min(2, want.size) || shared.length / s.set.size >= 0.5;
-      if (enough && (!best || score > best.score)) best = { score, range: s.range };
+    for (let i = 0; i < segs.length; i++) {
+      const have = new Set();
+      for (let j = i; j < Math.min(i + 3, segs.length); j++) {
+        segs[j].set.forEach(w => have.add(w));
+        const hit = want.filter(w => have.has(w)).length;
+        const cover = hit / want.length;
+        // Prefer more coverage, then the shortest stretch of the page.
+        const range = [segs[i].range[0], segs[j].range[1]];
+        const better = !best || cover > best.cover + 1e-9 || (Math.abs(cover - best.cover) < 1e-9 && range[1] - range[0] < best.range[1] - best.range[0]);
+        if (cover >= 0.6 && hit >= 3 && better) best = { cover, range };
+      }
     }
     return best?.range ?? null;
   }
 
-  // What to highlight on the cited page: every exact quote, otherwise the closest matching passage.
+  // No quote at all: the sentence on the page that best matches the answer's sentence. It must share
+  // several distinctive words with it (rare words on the page count most), and clearly beat the
+  // runner-up; otherwise there's no highlight.
+  function bestPassage(text, claim) {
+    const want = new Set(words(claim));
+    const segs = segments(text);
+    if (!segs.length || !want.size) return null;
+    // On a page of only a line or two (a slide title and bullet) one shared word is enough: there's
+    // nothing else on it to confuse it with.
+    const minShared = segs.length <= 2 ? 1 : 2;
+    const df = new Map();
+    for (const s of segs) for (const w of s.set) df.set(w, (df.get(w) || 0) + 1);
+    const idf = w => Math.log(1 + segs.length / (df.get(w) || segs.length));
+    // Only the claim's words that appear on this page can be matched at all.
+    const reachable = [...want].filter(w => df.has(w));
+    const reachWeight = reachable.reduce((t, w) => t + idf(w), 0);
+    if (reachable.length < minShared) return null;
+    const scored = segs.map(s => {
+      const shared = [...s.set].filter(w => want.has(w));
+      const weight = shared.reduce((t, w) => t + idf(w), 0);
+      return { shared, cover: weight / reachWeight, score: weight / Math.sqrt(s.w.length), range: s.range };
+    }).filter(s => s.shared.length >= minShared && s.cover >= 0.45)
+      .sort((a, b) => b.score - a.score);
+    const [first, second] = scored;
+    if (!first) return null;
+    if (second && second.score > first.score * 0.85) return null; // too close to call
+    return first.range;
+  }
+
+  // What to highlight on the cited page: every exact quote; otherwise the passage the AI's near-quote
+  // came from; otherwise a confident match for the answer's sentence; otherwise nothing.
   function highlightRanges(text, c) {
     const quotes = c.quotes?.length ? c.quotes : c.quote ? [c.quote] : [];
     const exact = quotes.map(q => findQuote(text, q)).filter(Boolean);
     if (exact.length) return { kind: 'exact', ranges: exact };
-    const near = bestPassage(text, c.claim || '');
+    const near = (c.hints || []).map(h => fuzzyQuote(text, h)).find(Boolean) ?? bestPassage(text, c.claim || '');
     return near ? { kind: 'closest', ranges: [near] } : { kind: 'none', ranges: [] };
   }
 
@@ -140,7 +177,7 @@
   // ---------- Rendering ----------
   const unitName = name => (/\.pdf$/i.test(name) ? 'Page' : /\.pptx?$/i.test(name) ? 'Slide' : 'Section');
   const NOTES = {
-    closest: 'Closest matching passage: the AI didn’t give an exact quote here, so this is the part of the page that best matches its answer.',
+    closest: 'Likely passage: the AI didn’t quote this page word for word, so this is the part that best matches what it said.',
     approx: 'Approximate reference: the AI pointed to this page, but no matching passage could be found. It may be in an image.',
     none: 'Couldn’t pinpoint the passage on this page. It may be in an image or laid out differently.',
   };
@@ -368,7 +405,7 @@
   // ---------- Opening & closing ----------
   const asItem = cite => ({
     n: cite.n, fileId: cite.fileId, fileName: cite.fileName, page: cite.page || 1, preview: !!cite.preview, focusTitle: !!cite.focusTitle,
-    quote: cite.quote || '', quotes: cite.quotes || [], claim: cite.claim || '', approximate: !!cite.approximate,
+    quote: cite.quote || '', quotes: cite.quotes || [], hints: cite.hints || [], claim: cite.claim || '', approximate: !!cite.approximate,
   });
   // preview(file) shows a whole file (or a note, fileId 'note:<id>') from its first page, without highlights.
   const preview = ({ fileId, fileName, focusTitle = false }) => open({ fileId, fileName, page: 1, preview: true, focusTitle });
@@ -418,5 +455,5 @@
   // Files can change while the viewer is open.
   document.addEventListener('eigen:files-changed', () => fileCache.clear());
 
-  window.eigenViewer = { open, preview, close, isOpen: id => !!current && current.items.some(c => c.fileId === id), _findQuote: findQuote, _bestPassage: bestPassage };
+  window.eigenViewer = { open, preview, close, isOpen: id => !!current && current.items.some(c => c.fileId === id), _findQuote: findQuote, _bestPassage: bestPassage, _fuzzyQuote: fuzzyQuote };
 })();

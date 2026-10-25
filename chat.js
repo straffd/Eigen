@@ -251,6 +251,7 @@
 
     form.hidden = false;
     newBtn.hidden = !messages.length;
+    renderAttachments();
     renderKeyChip();
     input.placeholder = scopeName() ? `Ask about ${scopeName()}…` : 'Ask anything…';
     sendBtn.disabled = sending;
@@ -298,6 +299,107 @@
 
   let frame = 0;
   const renderSoon = () => { if (!frame) frame = requestAnimationFrame(() => { frame = 0; render(); }); };
+
+  // ---------- Files attached to the chat ----------
+  // Pasted, dropped or picked files are read here in the browser and sent to the AI with each question
+  // in this chat while the page is open. They aren't saved to the course.
+  const MAX_ATTACH = 3;
+  const MAX_ATTACH_BYTES = 10 * 1024 * 1024;   // 10 MB per file
+  const MAX_ATTACH_CHARS = 60_000;             // text kept per file, so the AI isn't swamped (matches the server)
+  const attachEl = $('chat-attachments');
+  const attachInput = $('attach-input');
+  const attachedByChat = new Map();            // chat -> [{ id, name, size, mime, status, progress, pages, truncated, sent, reading }]
+  window.eigenAttachments = new Map();         // 'att:<id>' -> { name, pages }, so the viewer can show a cited attachment
+  const chatKey = () => (chatId ? `chat:${chatId}` : `course:${classId}:${folderId || ''}`);
+  const attached = () => attachedByChat.get(chatKey()) ?? [];
+  const fmtSize = b => (b < 1048576 ? `${Math.max(1, Math.round(b / 1024))} KB` : `${(b / 1048576).toFixed(1)} MB`);
+
+  function renderAttachments() {
+    const list = attached();
+    attachEl.hidden = !list.length;
+    attachEl.replaceChildren(...list.map(a => {
+      const chip = el(`<span class="attach-chip" data-status="${a.status}">${icon('file')}<span class="attach-name"></span><span class="attach-meta"></span><button type="button" class="attach-remove" aria-label="Remove">${icon('close')}</button></span>`);
+      chip.querySelector('.attach-name').textContent = a.name;
+      chip.querySelector('.attach-meta').textContent =
+        a.status === 'reading' ? (a.progress ? `Reading… ${Math.round(a.progress * 100)}%` : 'Reading…')
+        : a.status === 'ready' ? `${a.pages.length} ${a.pages.length === 1 ? 'page' : 'pages'}${a.truncated ? ' · first part only' : ''}`
+        : a.status === 'empty' ? 'No text found' : 'Couldn’t read';
+      chip.title = a.status === 'ready' && a.truncated ? `Only the first ${MAX_ATTACH_CHARS.toLocaleString()} characters are sent to the AI, to keep answers accurate.` : `${a.name} · ${fmtSize(a.size)}`;
+      chip.querySelector('.attach-remove').addEventListener('click', () => {
+        attachedByChat.set(chatKey(), attached().filter(x => x !== a));
+        window.eigenAttachments.delete('att:' + a.id);
+        renderAttachments();
+      });
+      return chip;
+    }));
+  }
+
+  // Keeps whole pages up to the character limit.
+  function capPages(pages) {
+    const out = [];
+    let total = 0;
+    for (const p of pages) {
+      if (total + p.length > MAX_ATTACH_CHARS) {
+        if (!out.length) out.push(p.slice(0, MAX_ATTACH_CHARS));
+        return { pages: out, truncated: true };
+      }
+      out.push(p);
+      total += p.length;
+    }
+    return { pages: out, truncated: false };
+  }
+
+  function attachFiles(files) {
+    if (!files.length) return;
+    if (!user || !db()) return toast('Sign in to attach files.');
+    const list = [...attached()];
+    for (const file of files) {
+      if (list.length >= MAX_ATTACH) { toast(`You can attach up to ${MAX_ATTACH} files to a chat.`); break; }
+      if (file.size > MAX_ATTACH_BYTES) { toast(`${file.name} is over 10 MB. Attach a smaller file, or upload it to a folder instead.`); continue; }
+      if (!window.eigenReader.canRead(file.name, file.type || '')) {
+        const kind = window.eigenReader.kindOf(file.name, file.type || '');
+        toast(kind === 'video' ? 'The AI can’t watch videos. Attach a transcript instead.'
+          : /\.doc$/i.test(file.name) ? `${file.name}: old .doc files can’t be read. Save it as .docx and attach it again.`
+          : `${file.name}: the AI can read PDF, Word (.docx), PowerPoint, Excel, text and code files.`);
+        continue;
+      }
+      const a = { id: crypto.randomUUID().slice(0, 12), name: file.name, size: file.size, mime: file.type || null, status: 'reading', progress: 0, pages: [], truncated: false, sent: false };
+      a.reading = window.eigenReader.extract(file, file.name, file.type || '', pr => { a.progress = pr; renderAttachments(); })
+        .then(({ pages, status }) => {
+          Object.assign(a, capPages(pages), { status });
+          if (status === 'ready') window.eigenAttachments.set('att:' + a.id, { name: a.name, pages: a.pages });
+          else toast(status === 'empty' ? `${file.name} has no selectable text (scanned pages and images aren’t read yet).` : `Couldn’t read ${file.name}.`);
+          renderAttachments();
+        });
+      list.push(a);
+    }
+    attachedByChat.set(chatKey(), list);
+    renderAttachments();
+  }
+
+  // What goes to the AI: the attached files' text.
+  const attachmentMaterials = () => attached().filter(a => a.status === 'ready')
+    .map(a => ({ fileId: 'att:' + a.id, fileName: a.name, folderName: '', mimeType: a.mime, pages: a.pages, status: 'ready', kind: 'attached' }));
+
+  $('attach-btn').addEventListener('click', () => attachInput.click());
+  attachInput.addEventListener('change', () => { attachFiles([...attachInput.files]); attachInput.value = ''; });
+  input.addEventListener('paste', e => {
+    const files = [...(e.clipboardData?.files || [])];
+    if (!files.length) return; // ordinary text paste
+    e.preventDefault();
+    attachFiles(files);
+  });
+  // Dropping files anywhere on the chat attaches them.
+  const chatView = document.querySelector('.chat-view');
+  const hasFiles = e => [...(e.dataTransfer?.types || [])].includes('Files');
+  chatView.addEventListener('dragover', e => { if (!hasFiles(e) || form.hidden) return; e.preventDefault(); form.classList.add('drop-target'); });
+  chatView.addEventListener('dragleave', e => { if (!chatView.contains(e.relatedTarget)) form.classList.remove('drop-target'); });
+  chatView.addEventListener('drop', e => {
+    form.classList.remove('drop-target');
+    if (!hasFiles(e) || form.hidden) return;
+    e.preventDefault();
+    attachFiles([...e.dataTransfer.files]);
+  });
 
   // ---------- Data ----------
   async function load() {
@@ -366,7 +468,13 @@
     messages = messages.filter(m => !m.transient); // clear the last error message
     input.value = '';
     autosize();
-    const userMsg = { role: 'user', content: text };
+    // Files still being read are waited for; newly attached ones are named in the question (and so in the saved chat).
+    const reading = attached().filter(a => a.status === 'reading');
+    if (reading.length) { sendBtn.disabled = true; await Promise.all(reading.map(a => a.reading)); }
+    const fresh = attached().filter(a => a.status === 'ready' && !a.sent);
+    const question = text + (fresh.length ? `\n\n📎 Attached: ${fresh.map(a => a.name).join(', ')}` : '');
+    const attachments = attachmentMaterials();
+    const userMsg = { role: 'user', content: question };
     const reply = { role: 'assistant', content: '', citations: [], pending: true };
     messages.push(userMsg, reply);
     render({ scroll: true });
@@ -399,7 +507,7 @@
         // Your own key: straight from this browser to Anthropic.
         let failure = null;
         await window.eigenAI.ask({
-          userId: user.id, classId, folderId, chatId, question: text, referenceMode: refToggle.checked,
+          userId: user.id, classId, folderId, chatId, question, referenceMode: refToggle.checked, attachments,
           onEvent: ev => { if (ev.t === 'error') failure = ev.message; else handle(ev); },
         });
         if (failure) throw new Error(failure);
@@ -413,9 +521,11 @@
             Authorization: `Bearer ${session.access_token}`,
             apikey: window.EIGEN_CONFIG.SUPABASE_ANON_KEY,
           },
-          body: JSON.stringify(chatId
-            ? { chat_id: chatId, message: text, reference_mode: refToggle.checked }
-            : { class_id: classId, folder_id: folderId, message: text, reference_mode: refToggle.checked }),
+          body: JSON.stringify({
+            ...(chatId ? { chat_id: chatId } : { class_id: classId, folder_id: folderId }),
+            message: question, reference_mode: refToggle.checked,
+            attachments: attachments.map(m => ({ id: m.fileId.slice(4), name: m.fileName, mime_type: m.mimeType, pages: m.pages })),
+          }),
         }).catch(() => null);
         if (!res || !res.ok || !res.body) {
           let msg = !res || res.status === 404
@@ -443,6 +553,7 @@
       }
       if (!finished) throw new Error('The answer was interrupted. Please try again.');
       reply.pending = false;
+      fresh.forEach(a => { a.sent = true; });
       if (chatId) window.eigenChats.touch(chatId);
     } catch (err) {
       console.error(err);
@@ -620,6 +731,7 @@
     box.value = '';
     box.style.height = 'auto';
     queued = { chatId: h.id, text };
+    if (attachedByChat.has('chat:new')) { attachedByChat.set(`chat:${h.id}`, attachedByChat.get('chat:new')); attachedByChat.delete('chat:new'); }
     if (location.hash === '#chat/new') location.replace('#chat/' + h.id); // don't keep the blank chat in history
     else location.hash = '#chat/' + h.id;
   }

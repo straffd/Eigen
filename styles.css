@@ -1166,3 +1166,16 @@ a.file-open { color: inherit; text-decoration: none; }
 .msg-body .katex { font-size: 1.08em; }
 .msg-body .katex-display { margin: 10px 0; overflow-x: auto; overflow-y: hidden; padding: 4px 0; }
 .chat-log { overflow-anchor: none; } /* chat.js keeps the reading position itself when the width changes */
+
+/* Files attached to the chat */
+.attach-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 0 8px; }
+.attach-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 30px; padding: 0 4px 0 10px; border: 1px solid var(--border); border-radius: 8px; background: #1b1b1b; font-size: 13px; }
+.attach-chip > svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--text-muted); }
+.attach-name { max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+.attach-meta { color: var(--text-faint); white-space: nowrap; }
+.attach-chip[data-status="empty"] .attach-meta, .attach-chip[data-status="failed"] .attach-meta { color: #e5867a; }
+.attach-remove { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 5px; color: var(--text-faint); }
+.attach-remove:hover { background: var(--hover); color: var(--text); }
+.attach-remove svg { width: 12px; height: 12px; }
+#attach-btn svg { width: 18px; height: 18px; }
+.chat-composer.drop-target { border-color: var(--text-muted); box-shadow: 0 0 0 3px rgba(255,255,255,.06); }

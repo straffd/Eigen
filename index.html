@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" crossorigin="anonymous">
-  <link rel="stylesheet" href="styles.css?v=43">
+  <link rel="stylesheet" href="styles.css?v=44">
 </head>
 <body>
   <!-- Icon sprite -->
@@ -251,9 +251,12 @@
         </header>
         <div class="chat-log" id="chat-log" aria-live="polite"></div>
         <form class="chat-composer" id="chat-form" hidden>
+          <div class="attach-row" id="chat-attachments" hidden></div>
           <textarea id="chat-input" rows="1" placeholder="Ask about this course…" aria-label="Message"></textarea>
           <div class="ask-bar">
             <div class="composer-tools">
+              <button class="icon-btn" id="attach-btn" type="button" aria-label="Attach files" title="Attach a PDF, Word, PowerPoint, Excel or text file (up to 10 MB), or paste one into the box"><svg><use href="#i-paperclip"/></svg></button>
+              <input type="file" id="attach-input" multiple hidden>
               <label class="ref-toggle" title="When on, every fact is linked to the file and page it came from">
                 <input type="checkbox" id="ref-mode"><span class="switch" aria-hidden="true"></span>Reference mode
               </label>
@@ -367,19 +370,19 @@
   <div class="toast" id="toast" role="status" hidden></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script>
-  <script src="config.js?v=43"></script>
-  <script src="auth.js?v=43"></script>
-  <script src="classes.js?v=43"></script>
-  <script src="extract.js?v=43"></script>
-  <script src="notes.js?v=43"></script>
-  <script src="files.js?v=43"></script>
-  <script src="library.js?v=43"></script>
-  <script src="chats.js?v=43"></script>
-  <script src="ai-direct.js?v=43"></script>
-  <script src="settings.js?v=43"></script>
-  <script src="viewer.js?v=43"></script>
+  <script src="config.js?v=44"></script>
+  <script src="auth.js?v=44"></script>
+  <script src="classes.js?v=44"></script>
+  <script src="extract.js?v=44"></script>
+  <script src="notes.js?v=44"></script>
+  <script src="files.js?v=44"></script>
+  <script src="library.js?v=44"></script>
+  <script src="chats.js?v=44"></script>
+  <script src="ai-direct.js?v=44"></script>
+  <script src="settings.js?v=44"></script>
+  <script src="viewer.js?v=44"></script>
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js" crossorigin="anonymous"></script>
-  <script src="chat.js?v=43"></script>
+  <script src="chat.js?v=44"></script>
   <script>
     const app = document.getElementById('app');
     const toggle = () => app.classList.toggle('collapsed');

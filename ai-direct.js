@@ -119,7 +119,7 @@
         source: { type: 'content', content },
         title: m.fileName.slice(0, 250),
         context: `${m.folderName ? `Folder: ${m.folderName}` : 'Saved on the course itself, not in a folder'}.` +
-          (m.kind === 'notes' ? ' The student\'s own notes, not official course material.' : '') + ` Each content block is one ${kind}` +
+          (m.kind === 'notes' ? ' The student\'s own notes, not official course material.' : m.kind === 'attached' ? ' Attached by the student to this chat (not saved in the course).' : '') + ` Each content block is one ${kind}` +
           (keep ? `; only the ${kind}s most relevant to the question are included (numbers: ${pageNumbers.join(', ')}).` : ` (${pageNumbers.length} in total).`),
         citations: { enabled: referenceMode },
       });
@@ -232,7 +232,7 @@
       if (!pages.length) return;
       documents.push({ material: m, unit, pages: new Set(m.pages.map((_, p) => p + 1)) });
       const esc = v => v.replace(/"/g, "'");
-      const own = m.kind === 'notes' ? ' type="student\'s own notes"' : '';
+      const own = m.kind === 'notes' ? ' type="student\'s own notes"' : m.kind === 'attached' ? ' type="attached to this chat by the student"' : '';
       blocks.push(`<document number="${documents.length}" title="${esc(m.fileName)}" folder="${esc(m.folderName || '(course)')}"${own}>\n${pages.join('\n')}\n</document>`);
     });
 
@@ -563,10 +563,12 @@
   // Streams an answer. onEvent receives the same events as the server function:
   // { t: 'text', text } | { t: 'cite', n, source } | { t: 'done', id, trimmed } | { t: 'error', message }
   // A chat (chatId) answers from the course or folder it sits in, if any (classId/folderId).
-  async function ask({ userId, classId, folderId, chatId = null, question, referenceMode, onEvent }) {
+  // attachments: files attached to the chat in this browser ({ fileId: 'att:…', fileName, pages, kind: 'attached' }).
+  async function ask({ userId, classId, folderId, chatId = null, question, referenceMode, attachments = [], onEvent }) {
     const course = classId ? window.eigenClasses.findClass(classId) : null;
     if (!course) folderId = null;
-    const [materials, history] = await Promise.all([course ? loadMaterials(course, folderId) : [], loadHistory(classId, folderId, chatId)]);
+    const [courseMaterials, history] = await Promise.all([course ? loadMaterials(course, folderId) : [], loadHistory(classId, folderId, chatId)]);
+    const materials = [...attachments, ...courseMaterials];
     const folderName = folderId ? course.folders.find(f => f.id === folderId)?.name ?? null : null;
     if (getProvider() === 'gemini') {
       return askGemini({ course, classId, folderId, chatId, folderName, question, referenceMode, materials, history, userId, onEvent });

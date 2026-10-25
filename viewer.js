@@ -132,6 +132,12 @@
   const isNote = id => id.startsWith('note:');
   async function loadFile(fileId) {
     if (fileCache.has(fileId)) return fileCache.get(fileId);
+    // A file attached to the chat: only in this browser, shown as the text that was read from it.
+    if (fileId.startsWith('att:')) {
+      const a = window.eigenAttachments?.get(fileId);
+      if (!a) throw new Error('This attached file isn’t open any more. Attach it again to see it.');
+      return { file: { name: a.name }, pdf: null, pages: a.pages };
+    }
     // A note written in Eigen: shown as text.
     if (isNote(fileId)) {
       const { data: note } = await db().from('notes').select('id, title, body').eq('id', fileId.slice(5)).maybeSingle();

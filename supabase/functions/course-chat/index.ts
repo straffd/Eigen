@@ -33,7 +33,7 @@ export interface Material {
   mimeType: string | null;
   pages: string[] | null;     // null = no text (video, image, unreadable or not read yet)
   status: string | null;      // file_texts.status, null if not read yet
-  kind?: "context" | "notes"; // notes = the student's own notes and documents
+  kind?: "context" | "notes" | "attached"; // notes = the student's own notes; attached = attached to this chat
 }
 
 // Notes written in Eigen become documents too, split into sections at paragraph breaks.
@@ -152,7 +152,7 @@ export function buildRequest(opts: {
       source: { type: "content", content },
       title: m.fileName.slice(0, 250),
       context: `${m.folderName ? `Folder: ${m.folderName}` : 'Saved on the course itself, not in a folder'}.` +
-        (m.kind === "notes" ? " The student's own notes, not official course material." : "") + ` Each content block is one ${kind}` +
+        (m.kind === "notes" ? " The student's own notes, not official course material." : m.kind === "attached" ? " Attached by the student to this chat (not saved in the course)." : "") + ` Each content block is one ${kind}` +
         (keep ? `; only the ${kind}s most relevant to the question are included (numbers: ${pageNumbers.join(", ")}).` : ` (${pageNumbers.length} in total).`),
       citations: { enabled: referenceMode },
     });
@@ -220,6 +220,25 @@ export function toSource(c: Anthropic.Beta.BetaTextCitation, docs: BuiltRequest[
   return { fileId: doc.material.fileId, fileName: doc.material.fileName, folderName: doc.material.folderName, page, quote: (c.cited_text ?? "").trim().slice(0, 600) };
 }
 
+// ---------- Files attached to a chat ----------
+// The browser reads attached files itself and sends their text: [{ id, name, mime_type?, pages: string[] }].
+export const MAX_ATTACHMENTS = 3;
+export const MAX_ATTACHMENT_CHARS = 60_000;
+export function readAttachments(raw: unknown): Material[] | null {
+  if (raw == null) return [];
+  if (!Array.isArray(raw) || raw.length > MAX_ATTACHMENTS) return null;
+  const out: Material[] = [];
+  for (const [i, a] of raw.entries()) {
+    const name = typeof a?.name === "string" ? a.name.slice(0, 200) : "";
+    const pages = Array.isArray(a?.pages) ? a.pages : null;
+    if (!name || !pages || pages.length > 2000 || !pages.every((p: unknown) => typeof p === "string")) return null;
+    if (pages.reduce((n: number, p: string) => n + p.length, 0) > MAX_ATTACHMENT_CHARS) return null;
+    const id = typeof a.id === "string" && /^[\w-]{1,40}$/.test(a.id) ? a.id : String(i); // the browser's id, so citations find the file
+    out.push({ fileId: `att:${id}`, fileName: name, folderName: "", mimeType: typeof a.mime_type === "string" ? a.mime_type : null, pages, status: "ready", kind: "attached" });
+  }
+  return out;
+}
+
 // ---------- Request handling ----------
 function json(status: number, body: unknown) {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -229,7 +248,7 @@ export async function handleRequest(req: Request, makeDeps: (req: Request) => Pr
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json(405, { error: "Method not allowed" });
 
-  let body: { class_id?: unknown; folder_id?: unknown; chat_id?: unknown; message?: unknown; reference_mode?: unknown };
+  let body: { class_id?: unknown; folder_id?: unknown; chat_id?: unknown; message?: unknown; reference_mode?: unknown; attachments?: unknown };
   try { body = await req.json(); } catch { return json(400, { error: "Invalid JSON" }); }
   let classId: string | null = typeof body.class_id === "string" && body.class_id ? body.class_id : null;
   let folderId = typeof body.folder_id === "string" && body.folder_id ? body.folder_id : null;
@@ -238,6 +257,8 @@ export async function handleRequest(req: Request, makeDeps: (req: Request) => Pr
   const referenceMode = body.reference_mode === true;
   if ((!classId && !chatId) || !question) return json(400, { error: "class_id or chat_id, and message, are required" });
   if (question.length > MAX_QUESTION_CHARS) return json(400, { error: `Questions can be up to ${MAX_QUESTION_CHARS} characters.` });
+  const attached = readAttachments(body.attachments);
+  if (!attached) return json(400, { error: `Attach up to ${MAX_ATTACHMENTS} files with up to ${MAX_ATTACHMENT_CHARS.toLocaleString()} characters of text each.` });
 
   let deps: Deps | null, course: { id: string; name: string } | null, materials: Material[], history: HistoryMessage[];
   try {
@@ -266,6 +287,7 @@ export async function handleRequest(req: Request, makeDeps: (req: Request) => Pr
     return json(500, { error: "The AI isn't fully set up yet. Run the latest supabase/schema.sql in Supabase, then try again." });
   }
   const folderName = folderId ? materials[0]?.folderName ?? null : null;
+  materials = [...attached, ...materials];
   const built = buildRequest({ courseName: course?.name ?? null, folderName, materials, history, question, referenceMode });
 
   const encoder = new TextEncoder();

@@ -149,7 +149,7 @@
     const BADGE = { context: 'Context', notes: 'Notes & docs', course: 'Course file', folder: 'Folder' };
     const row = (it, nested) => {
       const li = el(`
-        <li class="file-item ${nested ? 'nested' : ''}" draggable="true">
+        <li class="file-item ${nested ? 'nested' : ''}" draggable="true" data-sel="${it.type === 'note' ? 'note:' + it.href.slice(6) : 'file:' + it.file.id}">
           <button class="file-open" type="button">
             <span class="file-badge"></span>
             <span class="file-text"><span class="file-name"></span><span class="file-meta"></span></span>
@@ -181,7 +181,7 @@
       const inside = kids(f);
       const total = inFolder(f).length;
       const li = el(`
-        <li class="file-item lib-folder">
+        <li class="file-item lib-folder" data-sel="folder:${f.folderId}">
           <button class="file-open" type="button" aria-expanded="${open}">
             ${icon('chevron', 'lib-chev')}
             <span class="file-badge">${icon('folder')}</span>
@@ -238,6 +238,30 @@
     else { files = [...inFolders.data, ...onCourse.data]; notes = written; status = 'ready'; }
     render();
   }
+
+  // Right-click a row: open it or delete it. (With several selected, select.js offers deleting them all.)
+  content.addEventListener('contextmenu', e => {
+    const li = e.target.closest('[data-sel]');
+    if (!li) return;
+    e.preventDefault();
+    const key = li.dataset.sel;
+    const [type, id] = [key.split(':')[0], key.slice(key.indexOf(':') + 1)];
+    const it = items().find(x => (type === 'folder' ? x.type === 'folder' && x.folderId === id : type === 'note' ? x.type === 'note' && x.href === '#note/' + id : x.file?.id === id));
+    if (!it) return;
+    const del = { label: `Delete ${type}`, icon: 'trash', danger: true, run: () => window.eigenSelect.deleteItems([key]) };
+    window.eigenUI.openMenu(e.clientX, e.clientY, type === 'folder' ? [
+      { label: 'Open folder', icon: 'folder', run: () => { location.hash = it.href; } },
+      '-', del,
+    ] : type === 'note' ? [
+      { label: 'Open', icon: 'pencil', run: () => window.eigenViewer.preview({ fileId: 'note:' + id, fileName: it.name }) },
+      { label: 'Open full page', icon: 'external', run: () => { location.hash = it.href; } },
+      '-', del,
+    ] : [
+      { label: 'Preview', icon: 'file', run: () => window.eigenViewer.preview({ fileId: id, fileName: it.name }) },
+      { label: 'Open in new tab', icon: 'external', run: () => window.eigenFiles.openRow(it.file) },
+      '-', del,
+    ]);
+  });
 
   // ---------- Events ----------
   chipsEl.addEventListener('click', e => {

@@ -43,7 +43,7 @@
   function chatRow(c) {
     const li = el(`
       <li class="chat-item" data-chat-id="${c.id}">
-        <a class="row chat-row ${location.hash === '#chat/' + c.id ? 'active' : ''}" href="#chat/${c.id}" draggable="true">${icon('message')}<span class="chat-name"></span></a>
+        <a class="row chat-row ${location.hash === '#chat/' + c.id ? 'active' : ''}" href="#chat/${c.id}" draggable="true" data-sel="chat:${c.id}">${icon('message')}<span class="chat-name"></span></a>
       </li>`);
     li.querySelector('.chat-name').textContent = c.title;
     return li;
@@ -133,6 +133,17 @@
     render();
     const { error } = await db().from('chats').update({ title }).eq('id', chatId);
     if (error) { console.error(error); c.title = old; render(); toast(describeError(error)); }
+  }
+
+  // Deletes several chats at once (the selection asks first).
+  async function removeMany(ids) {
+    if (!ids.length) return true;
+    const { error } = await db().from('chats').delete().in('id', ids);
+    if (error) { console.error(error); toast(describeError(error)); return false; }
+    chats = chats.filter(x => !ids.includes(x.id));
+    if (ids.some(id => location.hash === '#chat/' + id)) location.hash = '';
+    render();
+    return true;
   }
 
   async function remove(chatId) {
@@ -233,7 +244,7 @@
       return p.kind === 'placed' && p.classId === classId && p.folderId === folderId;
     }),
     row: chatRow,
-    create, move, touch, rename, remove,
+    create, move, touch, rename, remove, removeMany,
     isDragging: () => !!dragId,
     draggingId: () => dragId,
   };

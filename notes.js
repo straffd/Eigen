@@ -89,6 +89,18 @@
     toast(`Moved “${data.title}” to ${f ? f.name : c?.name ?? 'the course'}.`);
   }
 
+  // Deletes several notes at once (the selection asks first).
+  async function removeMany(ids) {
+    if (!ids.length) return true;
+    const gone = all.filter(n => ids.includes(n.id));
+    const { error } = await db().from('notes').delete().in('id', ids);
+    if (error) { toast(describeError(error)); return false; }
+    for (const n of gone) announce({ id: n.id, class_id: n.class_id, folder_id: n.folder_id });
+    if (ids.some(id => window.eigenViewer.isOpen('note:' + id))) window.eigenViewer.close();
+    if (ids.includes(noteId)) { clearTimeout(saveTimer); dirty = false; location.hash = ''; }
+    return true;
+  }
+
   async function remove(id) {
     const n = id === note?.id ? note : (await db().from('notes').select('id, class_id, folder_id, title').eq('id', id).maybeSingle()).data;
     if (!n) return;
@@ -210,7 +222,7 @@
       const li = document.createElement('li');
       li.className = 'side-note';
       li.dataset.noteId = n.id;
-      li.innerHTML = `<button class="row file-row" type="button" draggable="true" title="Open note"><svg><use href="#i-pencil"/></svg><span class="file-name"></span></button>`;
+      li.innerHTML = `<button class="row file-row" type="button" draggable="true" data-sel="note:${n.id}" title="Open note"><svg><use href="#i-pencil"/></svg><span class="file-name"></span></button>`;
       li.querySelector('.file-name').textContent = n.title;
       return li;
     });
@@ -242,7 +254,7 @@
 
   window.eigenNotes = {
     sidebarRows,
-    list, create, save: saveNote, move, remove,
+    list, create, save: saveNote, move, remove, removeMany,
     find: id => all.find(n => n.id === id),
     // Notes directly in a folder, or on the course itself (folderId null), for the sidebar.
     under: (classId, folderId = null) => all.filter(n => n.class_id === classId && n.folder_id === folderId),

@@ -369,7 +369,7 @@
   function renderFolder(c, f) {
     const li = el(`
       <li class="folder" data-folder-id="${f.id}">
-        <a class="row folder-row ${location.hash === '#folder/' + f.id ? 'active' : ''}" href="#folder/${f.id}" draggable="true">${icon('folder')}<span class="folder-name"></span><span class="folder-size"></span></a>
+        <a class="row folder-row ${location.hash === '#folder/' + f.id ? 'active' : ''}" href="#folder/${f.id}" draggable="true" data-sel="folder:${f.id}">${icon('folder')}<span class="folder-name"></span><span class="folder-size"></span></a>
       </li>`);
     li.querySelector('.folder-name').textContent = f.name;
     li.querySelector('.folder-size').textContent = sizeLabel(f.id);
@@ -448,6 +448,19 @@
     classes = classes.filter(x => x.id !== classId);
     expanded.delete(classId);
     await commit('deleteClass', c);
+  }
+
+  // Deletes several folders (and their files) at once (the selection asks first).
+  async function deleteFolders(ids) {
+    for (const id of ids) {
+      const c = classes.find(x => x.folders.some(f => f.id === id));
+      const f = c?.folders.find(x => x.id === id);
+      if (!f) continue;
+      c.folders = c.folders.filter(x => x !== f);
+      await commit('deleteFolder', c, f);
+    }
+    document.dispatchEvent(new CustomEvent('eigen:files-changed'));
+    return true;
   }
 
   async function deleteFolder(classId, folderId) {
@@ -824,12 +837,15 @@
   const itemDrag = {
     start(e, item) {
       e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData(ITEM, JSON.stringify(item));
+      // Part of a selection: the selected files and notes all go together.
+      const group = window.eigenSelect?.dragGroup(`${item.type}:${item.id}`);
+      e.dataTransfer.setData(ITEM, JSON.stringify(group ? { group } : item));
     },
     has: e => [...(e.dataTransfer?.types || [])].includes(ITEM),
     read(e) { try { return JSON.parse(e.dataTransfer.getData(ITEM)); } catch { return null; } },
     // Moves a dragged file or note into a folder, or onto a course (folderId null).
     drop(item, classId, folderId) {
+      if (item?.group) return item.group.forEach(x => itemDrag.drop(x, classId, folderId));
       if (item?.type === 'file') window.eigenFiles?.move(item.id, folderId ? { folderId } : { classId });
       if (item?.type === 'note') window.eigenNotes?.move(item.id, { classId, folderId });
     },
@@ -839,6 +855,7 @@
   window.eigenUI = { el, icon, toast, confirmDelete, openMenu, closeMenu, inlineInput, drag: itemDrag };
   window.eigenClasses = {
     status: () => status,
+    deleteFolders,
     findClass: id => findClass(id),
     findFolder(folderId) {
       for (const c of classes) {

@@ -200,7 +200,7 @@
     const row = (f, uploading) => {
       const li = el(`
         <li class="course-file" ${uploading ? '' : `data-file-id="${f.id}"`}>
-          <button class="row file-row ${uploading ? 'uploading' : ''}" type="button" ${uploading ? '' : 'draggable="true"'} title="${uploading ? 'Uploading…' : 'Open'}">${icon('file')}<span class="file-name"></span><span class="folder-size"></span></button>
+          <button class="row file-row ${uploading ? 'uploading' : ''}" type="button" ${uploading ? '' : `draggable="true" data-sel="file:${f.id}"`} title="${uploading ? 'Uploading…' : 'Open'}">${icon('file')}<span class="file-name"></span><span class="folder-size"></span></button>
         </li>`);
       li.querySelector('.file-name').textContent = f.name;
       li.querySelector('.folder-size').textContent = uploading ? 'Uploading…' : formatSize(Number(f.size));
@@ -276,6 +276,26 @@
     render();
     const { error } = await db().from('files').update({ kind }).eq('id', id);
     if (error) { f.kind = old; render(); toast(describeError(error)); }
+  }
+
+  // Deletes several files at once (the selection asks first). Works for any of the user's files.
+  async function deleteFiles(ids) {
+    if (!ids.length) return true;
+    const { data, error } = await db().from('files').select('id, storage_path, size').in('id', ids);
+    if (error) { toast(describeError(error)); return false; }
+    if (data.length) {
+      const removed = await bucket().remove(data.map(f => f.storage_path));
+      if (removed.error) { toast(describeError(removed.error)); return false; }
+      const del = await db().from('files').delete().in('id', data.map(f => f.id));
+      if (del.error) { toast(describeError(del.error)); return false; }
+    }
+    const gone = new Set(ids);
+    files = files.filter(x => !gone.has(x.id));
+    if (courseFiles.some(x => gone.has(x.id))) { courseFiles = courseFiles.filter(x => !gone.has(x.id)); announceCourse(); }
+    usage -= data.reduce((s, f) => s + Number(f.size), 0);
+    render();
+    announce();
+    return true;
   }
 
   async function deleteFile(id) {
@@ -630,6 +650,7 @@
     canUpload: () => !!user && !!db(),
     courseRows,
     move: moveFile,
+    deleteMany: deleteFiles,
     courseFiles: classId => courseFiles.filter(f => f.class_id === classId),
   };
 
